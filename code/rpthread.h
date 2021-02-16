@@ -41,6 +41,11 @@ typedef struct threadControlBlock {
 	// And more ...
 
 	// YOUR CODE HERE
+	rpthread_t id;
+	int priority;
+	int status;
+	ucontext_t context;
+	stack_t stack;
 } tcb; 
 
 /* mutex struct definition */
@@ -54,10 +59,21 @@ typedef struct rpthread_mutex_t {
 // Feel free to add your own auxiliary data structures (linked list or queue etc...)
 
 // YOUR CODE HERE
+typedef struct runQueueNode {
+	tcb* node;
+	struct runQueueNode* next;
+} rQueueNode;
 
+typedef struct runQueue {
+	rQueueNode* head;
+	rQueueNode* tail;
+	int size;
+} rQueue;
 
 /* Function Declarations: */
-
+void initialize();
+void enqueue(tcb* threadControlBlock);
+tcb* dequeue();
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);

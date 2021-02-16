@@ -8,23 +8,73 @@
 
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
-
-
+#define THREAD_STACK_SIZE 1024*64
+#define MAX_PRIORITY = 10;
+rpthread_t threadID = 0;
+rQueue* runQueue = 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
-       // create Thread Control Block
-       // create and initialize the context of this thread
-       // allocate space of stack for this thread to run
-       // after everything is all set, push this thread int
-       // YOUR CODE HERE
-	
-    return 0;
+
+   // create Thread Control Block
+   // create and initialize the context of this thread
+   // allocate space of stack for this thread to run
+   // after everything is all set, push this thread int
+   // YOUR CODE HERE
+	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
+	threadControlBlock->id = threadID++;
+	threadControlBlock->priority = MAX_PRIORITY;
+	threadControlBlock->status = READY;
+	ucontext_t threadContext;
+	getcontext(&threadContext);
+	threadContext.uc_link = NULL;
+	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
+	threadcontext.uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
+	makecontext(&threadContext, function, 1, arg);
+   	threadControlBlock->context = threadContext;
+   	threadControlBlock->stack = threadContext.uc_stack;
+   	enqueue(threadControlBlock);
 };
+
+void initialize() {
+	runQueue = malloc(sizeof(rQueue) * 1); 
+	runQueue->size = 0;
+	runQueue->head = NULL;
+	runQueue->tail = NULL;
+}
+
+void enqueue(tcb* threadControlBlock) {
+	if (runQueue == NULL) {
+		initialize();
+	}
+	rQueueNode* newNode = malloc(sizeof(rQueue) * 1);
+   	newNode->node = threadControlBlock;
+   	newNode->next = NULL;
+   	if (runQueue->head == NULL) {
+   		runQueue->head = runQueue->tail = newNode;
+   	} else {
+   		 runQueue->tail->next = newNode;
+   		 runQueue->tail = new Node;
+   	}
+   	runQueue->size++;
+	return 0;
+}
+
+tcb* dequeue() {
+	if(rQueue == NULL || rQueue->head == NULL){
+		return NULL;
+	}
+	tcb* popped = rQueue->head->node;
+	rQueueNode* temp = rQueue->head;
+	rQueue->head = rQueue->head->next;
+	rQueue->size--;
+	free(temp);
+	return popped;
+}
 
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {
-	
 	// change thread state from Running to Ready
 	// save context of this thread to its thread control block
 	// wwitch from thread context to scheduler context
