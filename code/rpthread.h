@@ -44,6 +44,7 @@ typedef struct threadControlBlock {
 	rpthread_t id;
 	int priority;
 	int status;
+	int runtime;
 	ucontext_t context;
 	stack_t stack;
 } tcb; 
@@ -74,6 +75,7 @@ typedef struct runQueue {
 void initialize();
 void enqueue(tcb* threadControlBlock);
 tcb* dequeue();
+
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);

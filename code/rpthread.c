@@ -9,9 +9,10 @@
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
 #define THREAD_STACK_SIZE 1024*64
-#define MAX_PRIORITY = 10;
+#define MAX_PRIORITY 10;
 rpthread_t threadID = 0;
-rQueue* runQueue = 
+rQueue* runQueue = NULL;
+tcb* scheduler = NULL;
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -25,16 +26,27 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	threadControlBlock->id = threadID++;
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
-	ucontext_t threadContext;
+	threadControlBlock->runtime = 0;
+	ucontext_t threadContext = malloc(sizeof(uncontext_t) * 1);
 	getcontext(&threadContext);
-	threadContext.uc_link = NULL;
+	threadContext.uc_link = scheduler;
 	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
 	threadcontext.uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
-	makecontext(&threadContext, function, 1, arg);
+	if(arg != NULL){
+		makecontext(&threadContext, function, 1, arg);
+	}else{
+		makecontext(&threadContext, function, 0);
+	}
+	
    	threadControlBlock->context = threadContext;
    	threadControlBlock->stack = threadContext.uc_stack;
-   	enqueue(threadControlBlock);
+   	if(scheduler == NULL){
+   		scheduler = threadControlBlock;
+   	} else {
+   		enqueue(threadControlBlock);
+   	}
+   	return 0;
 };
 
 void initialize() {
@@ -77,17 +89,28 @@ tcb* dequeue() {
 int rpthread_yield() {
 	// change thread state from Running to Ready
 	// save context of this thread to its thread control block
-	// wwitch from thread context to scheduler context
+	// switch from thread context to scheduler context
 
 	// YOUR CODE HERE
+	tcb* current;
+	current->status = READY;
+	swapcontext(&(current->context), &(scheduler->context));
+	enqueue(current);
 	return 0;
 };
 
 /* terminate a thread */
 void rpthread_exit(void *value_ptr) {
 	// Deallocated any dynamic memory created when starting this thread
-
+	
 	// YOUR CODE HERE
+	if (value_ptr != NULL) {
+		*((char*)value_ptr) = ...; //Need to set to return value but how?
+	}
+	current->status = READY;
+	free(current->uc_stack.ss_sp);
+	free(current->context);
+	free(current);
 };
 
 
@@ -98,7 +121,17 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
-	return 0;
+	if(runQueue == NULL) return 0;
+	rQueueNode* current = runQueue->head;
+	while(current->id != thread) {
+		current = current->next;
+	}
+	if(current == NULL) return 0;
+	while(runningThread != thread) {
+		
+	}
+	void* returnValue = *((char*)(value_ptr));
+	return rpthread_exit(value_ptr);;
 };
 
 /* initialize the mutex lock */
@@ -154,7 +187,14 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
-
+	if(scheduler == NULL){
+		rpthread_create(&threadID, NULL, schedule, NULL);
+	}
+	if(sched == RR) {
+		sched_rr();
+	} else if (sched == MLFQ) {
+		sched_mlfq();
+	}
 // schedule policy
 #ifndef MLFQ
 	// Choose RR
