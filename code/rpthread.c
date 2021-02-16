@@ -130,8 +130,9 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	while(runningThread != thread) {
 		
 	}
-	void* returnValue = *((char*)(value_ptr));
-	return rpthread_exit(value_ptr);;
+	void* temp = malloc(sizeof(void*) * 1);
+	*((char*)(value_ptr)) = temp;
+	return rpthread_exit(temp);
 };
 
 /* initialize the mutex lock */
