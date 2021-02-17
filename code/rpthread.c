@@ -124,18 +124,13 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
+	
+	//TODO, not entirely sure what to do 
 	if(runQueue == NULL) return 0;
-	QueueNode* current = runQueue->head;
-	while(current->id != thread) {
-		current = current->next;
-	}
-	if(current == NULL) return 0;
-	while(runningThread != thread) {
 		
-	}
 	void* temp = malloc(sizeof(void*) * 1);
 	*((char*)(value_ptr)) = temp;
-	return rpthread_exit(temp);
+	return 0;
 };
 
 /* initialize the mutex lock */
