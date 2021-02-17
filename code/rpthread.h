@@ -46,9 +46,10 @@ typedef struct threadControlBlock {
 	int priority;
 	int status;
 	int runtime;
-	uint desiredMutex;
+	int desiredMutex;
 	ucontext_t context;
 	stack_t stack;
+	void* exitValue;
 } tcb; 
 
 /* mutex struct definition */

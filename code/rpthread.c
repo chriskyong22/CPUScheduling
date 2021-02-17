@@ -25,13 +25,9 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
    // allocate space of stack for this thread to run
    // after everything is all set, push this thread int
    // YOUR CODE HERE
-	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
-	threadControlBlock->id = threadID++;
-	threadControlBlock->priority = MAX_PRIORITY;
-	threadControlBlock->status = READY;
-	threadControlBlock->runtime = 0;
+	tcb* threadControlBlock = initializeTCB();
 	getcontext(&(threadControlBlock->context));
-	threadContext.uc_link = scheduleNode; //Not sure if I should link to scheduler context or how this should work
+	threadContext.uc_link = scheduleNode->context; //Not sure if I should link to scheduler context or how this should work
 	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
 	threadcontext.uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
@@ -50,6 +46,17 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
    	}
    	return 0;
 };
+
+tcb* initializeTCB(){
+	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
+	threadControlBlock->id = threadID++;
+	threadControlBlock->priority = MAX_PRIORITY;
+	threadControlBlock->status = READY;
+	threadControlBlock->runtime = 0;
+	threadControlBlock->desiredMutex = -1;
+	threadControlBlock->exitValue = NULL;
+	return threadControlBlock;
+}
 
 void initialize(Queue* Queue) {
 	Queue = malloc(sizeof(Queue) * 1); 
@@ -109,11 +116,10 @@ void rpthread_exit(void *value_ptr) {
 	
 	// YOUR CODE HERE
 	if (value_ptr != NULL) {
-		*((char*)value_ptr) = ...; //Need to set to return value but how?
+		current->exitValue = value_ptr; //Need to set to return value but how?
 	}
-	current->status = READY;
 	free(current->uc_stack.ss_sp);
-	free(current);
+	
 };
 
 
@@ -126,8 +132,6 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// YOUR CODE HERE
 	
 	//TODO, not entirely sure what to do 
-	if(runQueue == NULL) return 0;
-		
 	void* temp = malloc(sizeof(void*) * 1);
 	*((char*)(value_ptr)) = temp;
 	return 0;
