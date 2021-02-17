@@ -13,8 +13,9 @@
 rpthread_t threadID = 0;
 uint mutexID = 0;
 Queue* runQueue = NULL;
+Queue* blockedQueue = NULL;
 tcb* scheduleNode = NULL; //NOT SURE WHAT TO DO HERE still
-QueueNode* current = NULL;
+tcb* current = NULL;
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -29,8 +30,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
 	threadControlBlock->runtime = 0;
-	ucontext_t threadContext = malloc(sizeof(uncontext_t) * 1);
-	getcontext(&threadContext);
+	getcontext(&(threadControlBlock->context));
 	threadContext.uc_link = scheduleNode; //Not sure if I should link to scheduler context or how this should work
 	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
@@ -58,33 +58,33 @@ void initialize(Queue* Queue) {
 	Queue->tail = NULL;
 }
 
-void enqueue(Queue* Queue, tcb* threadControlBlock) {
-	if (rQueue == NULL) {
+void enqueue(Queue* queue, tcb* threadControlBlock) {
+	if (queue == NULL) {
 		initialize();
 	}
 	QueueNode* newNode = malloc(sizeof(Queue) * 1);
    	newNode->node = threadControlBlock;
    	newNode->next = NULL;
-   	if (Queue->head == NULL) {
-   		Queue->head = Queue->tail = newNode;
+   	if (queue->head == NULL) {
+   		queue->head = queue->tail = newNode;
    	} else {
-   		 Queue->tail->next = newNode;
-   		 Queue->tail = new Node;
+   		 queue->tail->next = newNode;
+   		 queue->tail = new Node;
    	}
-   	Queue->size++;
+   	queue->size++;
 	return 0;
 }
 
-tcb* dequeue(Queue* rQueue) {
-	if(Queue == NULL || Queue->head == NULL){
+tcb* dequeue(Queue* queue) {
+	if(queue == NULL || queue->head == NULL){
 		return NULL;
 	}
-	tcb* popped = Queue->head->node;
-	QueueNode* temp = Queue->head;
-	Queue->head = Queue->head->next;
-	Queue->size--;
-	if(Queue->size == 0){
-		Queue->tail = NULL;
+	tcb* popped = queue->head->node;
+	QueueNode* temp = queue->head;
+	queue->head = queue->head->next;
+	queue->size--;
+	if(queue->size == 0){
+		queue->tail = NULL;
 	}
 	free(temp);
 	return popped;
@@ -97,10 +97,9 @@ int rpthread_yield() {
 	// switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	tcb* current;
 	current->status = READY;
 	swapcontext(&(current->context), &(scheduler->context));
-	enqueue(current);
+	enqueue(runQueue, current);
 	return 0;
 };
 
@@ -114,7 +113,6 @@ void rpthread_exit(void *value_ptr) {
 	}
 	current->status = READY;
 	free(current->uc_stack.ss_sp);
-	free(current->context);
 	free(current);
 };
 
@@ -127,7 +125,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
   
 	// YOUR CODE HERE
 	if(runQueue == NULL) return 0;
-	rQueueNode* current = runQueue->head;
+	QueueNode* current = runQueue->head;
 	while(current->id != thread) {
 		current = current->next;
 	}
@@ -176,7 +174,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         	//Shouldn't the swapping and setting to block be done in the caller function and not in here? 
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
-		    enqueue(blockList, current); // What is the block list? 
+		    enqueue(blockedQueue, current); 
 		    swapcontext(&(current->context), &(scheduler->context)); 
 		    //Shouldn't it call schedule now?.... what is going on?
 		    
@@ -202,7 +200,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	}
 	
 	if (mutex->lock == '1' && current->id == mutex->tid) {
-		rQueueNode* currentBlock = blocklist->head;
+		QueueNode* currentBlock = blockedQueue->head;
 		while (currentBlock != NULL) {
 			if (mutex->id == currentBlock->desiredMutex) {
 				//TODO
@@ -223,6 +221,10 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 /* destroy the mutex */
 int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	// Deallocate dynamic memory created in rpthread_mutex_init
+	if(mutex == NULL){
+		return -1;
+	}
+	// Should we be able to free mutexes that are in use or required/wanted by threads?
 	free(mutex);
 	return 0;
 };
