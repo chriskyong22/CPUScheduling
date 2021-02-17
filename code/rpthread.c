@@ -11,8 +11,10 @@
 #define THREAD_STACK_SIZE 1024*64
 #define MAX_PRIORITY 10;
 rpthread_t threadID = 0;
-rQueue* runQueue = NULL;
-tcb* scheduler = NULL;
+uint mutexID = 0;
+Queue* runQueue = NULL;
+tcb* scheduleNode = NULL; //NOT SURE WHAT TO DO HERE still
+QueueNode* current = NULL;
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -29,7 +31,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	threadControlBlock->runtime = 0;
 	ucontext_t threadContext = malloc(sizeof(uncontext_t) * 1);
 	getcontext(&threadContext);
-	threadContext.uc_link = scheduler;
+	threadContext.uc_link = scheduleNode; //Not sure if I should link to scheduler context or how this should work
 	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
 	threadcontext.uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
@@ -41,46 +43,49 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	
    	threadControlBlock->context = threadContext;
    	threadControlBlock->stack = threadContext.uc_stack;
-   	if(scheduler == NULL){
-   		scheduler = threadControlBlock;
+   	if(scheduleNode == NULL){
+   		scheduleNode = threadControlBlock;
    	} else {
-   		enqueue(threadControlBlock);
+   		enqueue(runQueue, threadControlBlock);
    	}
    	return 0;
 };
 
-void initialize() {
-	runQueue = malloc(sizeof(rQueue) * 1); 
-	runQueue->size = 0;
-	runQueue->head = NULL;
-	runQueue->tail = NULL;
+void initialize(Queue* Queue) {
+	Queue = malloc(sizeof(Queue) * 1); 
+	Queue->size = 0;
+	Queue->head = NULL;
+	Queue->tail = NULL;
 }
 
-void enqueue(tcb* threadControlBlock) {
-	if (runQueue == NULL) {
+void enqueue(Queue* Queue, tcb* threadControlBlock) {
+	if (rQueue == NULL) {
 		initialize();
 	}
-	rQueueNode* newNode = malloc(sizeof(rQueue) * 1);
+	QueueNode* newNode = malloc(sizeof(Queue) * 1);
    	newNode->node = threadControlBlock;
    	newNode->next = NULL;
-   	if (runQueue->head == NULL) {
-   		runQueue->head = runQueue->tail = newNode;
+   	if (Queue->head == NULL) {
+   		Queue->head = Queue->tail = newNode;
    	} else {
-   		 runQueue->tail->next = newNode;
-   		 runQueue->tail = new Node;
+   		 Queue->tail->next = newNode;
+   		 Queue->tail = new Node;
    	}
-   	runQueue->size++;
+   	Queue->size++;
 	return 0;
 }
 
-tcb* dequeue() {
-	if(rQueue == NULL || rQueue->head == NULL){
+tcb* dequeue(Queue* rQueue) {
+	if(Queue == NULL || Queue->head == NULL){
 		return NULL;
 	}
-	tcb* popped = rQueue->head->node;
-	rQueueNode* temp = rQueue->head;
-	rQueue->head = rQueue->head->next;
-	rQueue->size--;
+	tcb* popped = Queue->head->node;
+	QueueNode* temp = Queue->head;
+	Queue->head = Queue->head->next;
+	Queue->size--;
+	if(Queue->size == 0){
+		Queue->tail = NULL;
+	}
 	free(temp);
 	return popped;
 }
@@ -139,8 +144,15 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 int rpthread_mutex_init(rpthread_mutex_t *mutex, 
                           const pthread_mutexattr_t *mutexattr) {
 	//initialize data structures for this mutex
-
 	// YOUR CODE HERE
+	if(mutex == NULL){
+		return -1;
+	}
+	
+	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
+	mutex->id = mutexID++;
+	mutex->tid = -1; 
+	mutex->lock = '0';
 	return 0;
 };
 
@@ -152,7 +164,30 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
-        return 0;
+        
+        
+        //Where to find the built-in test and set atomic function....?????? I found only c++ versions 
+        // So I'm just going to use int as the locks even though this is not really test_and_set but w/e
+       	if(mutex == NULL){
+       		return -1;
+       	}
+       	
+        if(mutex->lock == '1') {
+        	//Shouldn't the swapping and setting to block be done in the caller function and not in here? 
+		    current->status = BLOCKED;
+		    current->desiredMutex = mutex->id;
+		    enqueue(blockList, current); // What is the block list? 
+		    swapcontext(&(current->context), &(scheduler->context)); 
+		    //Shouldn't it call schedule now?.... what is going on?
+		    
+        } else if (mutex->lock == '0') {
+        	mutex->lock = '1'; 
+        	mutex->tid = current->id;
+        	return 0;
+        } else {
+        	
+        }
+        return -1;
 };
 
 /* release the mutex lock */
@@ -162,14 +197,33 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	// so that they could compete for mutex later.
 
 	// YOUR CODE HERE
-	return 0;
+	if (mutex == NULL) {
+		return -1;
+	}
+	
+	if (mutex->lock == '1' && current->id == mutex->tid) {
+		rQueueNode* currentBlock = blocklist->head;
+		while (currentBlock != NULL) {
+			if (mutex->id == currentBlock->desiredMutex) {
+				//TODO
+				//MOVE THIS NODE OUT OF BLOCK LIST AND MOVE IT TO THE RUNNING QUEUE 
+			}
+		}
+		mutex->lock = '0';
+		return 0;
+	} else if (mutex->lock == '0') {
+	
+	} else {
+	
+	}
+	return -1;
 };
 
 
 /* destroy the mutex */
 int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	// Deallocate dynamic memory created in rpthread_mutex_init
-
+	free(mutex);
 	return 0;
 };
 
@@ -191,9 +245,9 @@ static void schedule() {
 	if(scheduler == NULL){
 		rpthread_create(&threadID, NULL, schedule, NULL);
 	}
-	if(sched == RR) {
+	if(sched == RR) { //Probably need to do strcmp here
 		sched_rr();
-	} else if (sched == MLFQ) {
+	} else if (sched == MLFQ) { //Probably need to do strcmp here
 		sched_mlfq();
 	}
 // schedule policy

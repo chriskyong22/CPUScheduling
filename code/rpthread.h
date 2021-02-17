@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include 
 
 typedef uint rpthread_t;
 
@@ -45,6 +46,7 @@ typedef struct threadControlBlock {
 	int priority;
 	int status;
 	int runtime;
+	uint desiredMutex;
 	ucontext_t context;
 	stack_t stack;
 } tcb; 
@@ -52,29 +54,32 @@ typedef struct threadControlBlock {
 /* mutex struct definition */
 typedef struct rpthread_mutex_t {
 	/* add something here */
-
 	// YOUR CODE HERE
+	
+	uint id; //ID of the mutex
+	int tid; //Change to rp_thread_t later when I figure out if scheduling thread will always be 0 (if so, we can initially set it to 0 since all other threads IDs > 0)
+	char lock; //Using char to save memory atm 
 } rpthread_mutex_t;
 
 /* define your data structures here: */
 // Feel free to add your own auxiliary data structures (linked list or queue etc...)
 
 // YOUR CODE HERE
-typedef struct runQueueNode {
+typedef struct QueueNode {
 	tcb* node;
-	struct runQueueNode* next;
-} rQueueNode;
+	struct QueueNode* next;
+} QueueNode;
 
-typedef struct runQueue {
-	rQueueNode* head;
-	rQueueNode* tail;
+typedef struct Queue {
+	QueueNode* head;
+	QueueNode* tail;
 	int size;
-} rQueue;
+} Queue;
 
 /* Function Declarations: */
-void initialize();
-void enqueue(tcb* threadControlBlock);
-tcb* dequeue();
+void initialize(Queue*);
+void enqueue(Queue*,tcb* threadControlBlock);
+tcb* dequeue(Queue*);
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
