@@ -11,9 +11,11 @@
 #define THREAD_STACK_SIZE 1024*64
 #define MAX_PRIORITY 10;
 rpthread_t threadID = 0;
-uint mutexID = 0;
+uint mutexID = 1;
 Queue* runQueue = NULL;
 Queue* blockedQueue = NULL;
+Queue* exitQueue = NULL;
+Queue* joinQueue = NULL;
 tcb* scheduleNode = NULL; //NOT SURE WHAT TO DO HERE still
 tcb* current = NULL;
 /* create a new thread */
@@ -39,7 +41,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	
    	threadControlBlock->context = threadContext;
    	threadControlBlock->stack = threadContext.uc_stack;
-   	if(scheduleNode == NULL){
+   	if (scheduleNode == NULL) {
    		scheduleNode = threadControlBlock;
    	} else {
    		enqueue(runQueue, threadControlBlock);
@@ -47,9 +49,10 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
    	return 0;
 };
 
-tcb* initializeTCB(){
+tcb* initializeTCB() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
-	threadControlBlock->id = threadID++;
+	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
+	threadControlBlock->joinTID = -1;  
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
 	threadControlBlock->runtime = 0;
@@ -58,18 +61,20 @@ tcb* initializeTCB(){
 	return threadControlBlock;
 }
 
-void initialize(Queue* Queue) {
-	Queue = malloc(sizeof(Queue) * 1); 
-	Queue->size = 0;
-	Queue->head = NULL;
-	Queue->tail = NULL;
+Queue* initialize() {
+	Queue* queue = malloc(sizeof(Queue) * 1); 
+	queue->size = 0;
+	queue->head = NULL;
+	queue->tail = NULL;
+	return queue;
 }
 
+// Must initialize the queue via initialize() before calling this method
 void enqueue(Queue* queue, tcb* threadControlBlock) {
 	if (queue == NULL) {
-		initialize();
+		return;
 	}
-	QueueNode* newNode = malloc(sizeof(Queue) * 1);
+	QueueNode* newNode = malloc(sizeof(QueueNode) * 1);
    	newNode->node = threadControlBlock;
    	newNode->next = NULL;
    	if (queue->head == NULL) {
@@ -83,7 +88,7 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
 }
 
 tcb* dequeue(Queue* queue) {
-	if(queue == NULL || queue->head == NULL){
+	if(queue == NULL || queue->head == NULL) {
 		return NULL;
 	}
 	tcb* popped = queue->head->node;
@@ -97,6 +102,54 @@ tcb* dequeue(Queue* queue) {
 	return popped;
 }
 
+tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
+	if(queue == NULL || queue->head == NULL) {
+		return NULL;
+	}
+	QueueNode* currentNode = queue->head;
+	// Checking if the first node has the data
+	if(currentNode->node->id == thread){
+		return dequeue(queue);
+	}
+	// Will traverse through all the node and check except the 1st node 
+	while(currentNode->next != NULL) {
+		if(current->next->node->id == thread) {
+			tcb* threadControlBlock = current->next->node;
+			QueueNode* temp = current->next;
+			current->next = current->next->next;
+			free(temp);
+			queue->size--;
+			return threadControlBlock;
+		}
+		currentNode = currentNode->next;
+	}
+	return NULL;
+}
+
+tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
+	if(queue == NULL || queue->head == NULL) {
+		return NULL;
+	}
+	QueueNode* currentNode = queue->head;
+	// Checking if the first node has the data
+	if(currentNode->node->joinTID == thread){
+		return dequeue(queue);
+	}
+	// Will traverse through all the node and check except the 1st node 
+	while(currentNode->next != NULL) {
+		if(current->next->node->joinTID == thread) {
+			tcb* threadControlBlock = current->next->node;
+			QueueNode* temp = current->next;
+			current->next = current->next->next;
+			free(temp);
+			queue->size--;
+			return threadControlBlock;
+		}
+		currentNode = currentNode->next;
+	}
+	return NULL;
+}
+
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {
 	// change thread state from Running to Ready
@@ -105,8 +158,9 @@ int rpthread_yield() {
 
 	// YOUR CODE HERE
 	current->status = READY;
-	swapcontext(&(current->context), &(scheduler->context));
 	enqueue(runQueue, current);
+	swapcontext(&(current->context), &(scheduler->context));
+
 	return 0;
 };
 
@@ -117,9 +171,20 @@ void rpthread_exit(void *value_ptr) {
 	// YOUR CODE HERE
 	if (value_ptr != NULL) {
 		current->exitValue = value_ptr; //Need to set to return value but how?
-	}
-	free(current->uc_stack.ss_sp);
+	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
+	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
+	free(current->uc_stack.ss_sp);
+	tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
+	if (joinThread != NULL) {
+		joinThread->joinTID = -1;
+		joinThread->exitValue = current->exitValue;
+		enqueue(runQueue, joinThread);
+		//Can we free current now?
+		free(current);
+	} else {
+		enqueue(exitQueue, current);
+	}
 };
 
 
@@ -131,9 +196,20 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
   
 	// YOUR CODE HERE
 	
-	//TODO, not entirely sure what to do 
-	void* temp = malloc(sizeof(void*) * 1);
-	*((char*)(value_ptr)) = temp;
+	//According to how PTHREAD works, threads cannot join on the same thread meaning once a thread is joined on, the joined thread's pthread struct should be freed and before that should return the retval to the thread that is doing the joinning  
+	//Join threads are taken off the run queue because it wastes run time and should only resume when if the thread exits right? Therefore Two cases: Thread Exits then another thread attempts to join or threads attempts to join then thread exits? Therefore we have to check the exit queue in here to see if the thread has already exit and check in the exit, if there is a thread waiting to join on it?
+	// What happens if a thread attempts to join but the thread does not exist or already exitted, should it just be stuck forever on the join queue?
+	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
+	if(exitThread == NULL){
+		current->status = WAITING;
+		current->joinTID = thread;
+		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread. 
+	} else {
+		current->joinTID = -1;	
+		*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
+		free(exitThread);
+	}
+	
 	return 0;
 };
 
@@ -170,7 +246,6 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
        	}
        	
         if(mutex->lock == '1') {
-        	//Shouldn't the swapping and setting to block be done in the caller function and not in here? 
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
 		    enqueue(blockedQueue, current); 
@@ -198,15 +273,21 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		return -1;
 	}
 	
+	//Checking if the thread has the mutex so other threads cannot just unlock mutexes they do not have 
 	if (mutex->lock == '1' && current->id == mutex->tid) {
 		QueueNode* currentBlock = blockedQueue->head;
-		while (currentBlock != NULL) {
-			if (mutex->id == currentBlock->desiredMutex) {
-				//TODO
-				//MOVE THIS NODE OUT OF BLOCK LIST AND MOVE IT TO THE RUNNING QUEUE 
+		int maxthreads = blockedQueue->size; 
+		for (int index = 0; index < maxthreads; index++) {
+			tcb* currentThread = dequeue(blockedQueue);
+			//Means this thread requires this mutex, and now the mutex is free, can be removed from the block list and placed on the runQueue
+			if (currentThread->desiredMutex == mutex->id) { 
+				enqueue(runQueue, currentThread);
+			} else {
+				enqueue(blockedQueue, currentThread);
 			}
 		}
 		mutex->lock = '0';
+		mutex->tid = -1;
 		return 0;
 	} else if (mutex->lock == '0') {
 	

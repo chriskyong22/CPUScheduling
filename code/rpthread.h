@@ -21,6 +21,7 @@
 #define READY 0
 #define SCHEDULED 1
 #define BLOCKED 2
+#define WAITING 3
 
 /* include lib header files that you need here: */
 #include <unistd.h>
@@ -43,6 +44,7 @@ typedef struct threadControlBlock {
 
 	// YOUR CODE HERE
 	rpthread_t id;
+	int joinTID; //The threadID of which thread THIS thread is waiting on to join with
 	int priority;
 	int status;
 	int runtime;
@@ -78,10 +80,11 @@ typedef struct Queue {
 } Queue;
 
 /* Function Declarations: */
-void initialize(Queue*);
+Queue* initialize();
 void enqueue(Queue*,tcb* threadControlBlock);
 tcb* dequeue(Queue*);
-
+tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
+tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);
