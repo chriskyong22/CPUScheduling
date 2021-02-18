@@ -16,7 +16,7 @@ Queue* runQueue = NULL;
 Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
-tcb* scheduleNode = NULL; //NOT SURE WHAT TO DO HERE still
+tcb* scheduler = NULL; //NOT SURE WHAT TO DO HERE still
 tcb* current = NULL;
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -27,22 +27,24 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
    // allocate space of stack for this thread to run
    // after everything is all set, push this thread int
    // YOUR CODE HERE
+   
+   //If the scheduler has not been initialized meaning there are no threads running, should it create the scheduler now first then try to create other threads?
 	tcb* threadControlBlock = initializeTCB();
 	getcontext(&(threadControlBlock->context));
 	ucontext_t* threadContext = &(threadControlBlock->context);
-	threadContext->uc_link = &scheduleNode->context; //Not sure if I should link to scheduler context or how this should work
+	threadContext->uc_link = 0; //Not sure if I should link to scheduler context or how this should work
 	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
 	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
 	if(arg != NULL){
-		makecontext(threadContext, function, 1, arg);
+		makecontext(threadContext, (void*)function, 1, arg);
 	}else{
-		makecontext(threadContext, function, 0);
+		makecontext(threadContext, (void*)function, 0);
 	}
 	
    	threadControlBlock->stack = threadContext->uc_stack;
-   	if (scheduleNode == NULL) {
-   		scheduleNode = threadControlBlock;
+   	if (scheduler == NULL) {
+   		scheduler = threadControlBlock;
    	} else {
    		enqueue(runQueue, threadControlBlock);
    	}
@@ -325,13 +327,9 @@ static void schedule() {
 	// YOUR CODE HERE
 	if(scheduler == NULL){
 		//Shouldn't it create a thread that is the scheduler? but Schedule() is not void* void*...?
-		rpthread_create(&threadID, NULL, schedule, NULL); 
+		rpthread_create(&threadID, NULL, (void*) &schedule, NULL); 
 	}
-	if(sched == RR) { //Probably need to do strcmp here
-		sched_rr();
-	} else if (sched == MLFQ) { //Probably need to do strcmp here
-		sched_mlfq();
-	}
+
 // schedule policy
 #ifndef MLFQ
 	// Choose RR
