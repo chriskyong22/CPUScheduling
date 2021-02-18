@@ -173,7 +173,7 @@ void rpthread_exit(void *value_ptr) {
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
 	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
-	free(current->context.uc_stack.ss_sp);.
+	free(current->context.uc_stack.ss_sp);
 	tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
 	if (joinThread != NULL) {
 		joinThread->joinTID = -1;
