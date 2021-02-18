@@ -29,18 +29,18 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
    // YOUR CODE HERE
 	tcb* threadControlBlock = initializeTCB();
 	getcontext(&(threadControlBlock->context));
-	threadContext.uc_link = scheduleNode->context; //Not sure if I should link to scheduler context or how this should work
-	threadContext.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-	threadContext.uc_stack.ss_size = THREAD_STACK_SIZE;
-	threadcontext.uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
+	ucontext_t* threadContext = &(threadControlBlock->context);
+	threadContext->uc_link = &scheduleNode->context; //Not sure if I should link to scheduler context or how this should work
+	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
+	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
 	if(arg != NULL){
-		makecontext(&threadContext, function, 1, arg);
+		makecontext(threadContext, function, 1, arg);
 	}else{
-		makecontext(&threadContext, function, 0);
+		makecontext(threadContext, function, 0);
 	}
 	
-   	threadControlBlock->context = threadContext;
-   	threadControlBlock->stack = threadContext.uc_stack;
+   	threadControlBlock->stack = threadContext->uc_stack;
    	if (scheduleNode == NULL) {
    		scheduleNode = threadControlBlock;
    	} else {
@@ -81,10 +81,9 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
    		queue->head = queue->tail = newNode;
    	} else {
    		 queue->tail->next = newNode;
-   		 queue->tail = new Node;
+   		 queue->tail = newNode;
    	}
    	queue->size++;
-	return 0;
 }
 
 tcb* dequeue(Queue* queue) {
@@ -113,10 +112,10 @@ tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	}
 	// Will traverse through all the node and check except the 1st node 
 	while(currentNode->next != NULL) {
-		if(current->next->node->id == thread) {
-			tcb* threadControlBlock = current->next->node;
-			QueueNode* temp = current->next;
-			current->next = current->next->next;
+		if(currentNode->next->node->id == thread) {
+			tcb* threadControlBlock = currentNode->next->node;
+			QueueNode* temp = currentNode->next;
+			currentNode->next = currentNode->next->next;
 			free(temp);
 			queue->size--;
 			return threadControlBlock;
@@ -137,10 +136,10 @@ tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	}
 	// Will traverse through all the node and check except the 1st node 
 	while(currentNode->next != NULL) {
-		if(current->next->node->joinTID == thread) {
-			tcb* threadControlBlock = current->next->node;
-			QueueNode* temp = current->next;
-			current->next = current->next->next;
+		if(currentNode->next->node->joinTID == thread) {
+			tcb* threadControlBlock = currentNode->next->node;
+			QueueNode* temp = currentNode->next;
+			currentNode->next = currentNode->next->next;
 			free(temp);
 			queue->size--;
 			return threadControlBlock;
@@ -174,7 +173,7 @@ void rpthread_exit(void *value_ptr) {
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
 	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
-	free(current->uc_stack.ss_sp);
+	free(current->context.uc_stack.ss_sp);.
 	tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
 	if (joinThread != NULL) {
 		joinThread->joinTID = -1;
@@ -325,7 +324,8 @@ static void schedule() {
 
 	// YOUR CODE HERE
 	if(scheduler == NULL){
-		rpthread_create(&threadID, NULL, schedule, NULL);
+		//Shouldn't it create a thread that is the scheduler? but Schedule() is not void* void*...?
+		rpthread_create(&threadID, NULL, schedule, NULL); 
 	}
 	if(sched == RR) { //Probably need to do strcmp here
 		sched_rr();

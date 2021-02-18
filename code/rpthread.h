@@ -29,7 +29,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include 
+#include <ucontext.h>
 
 typedef uint rpthread_t;
 
@@ -81,7 +81,8 @@ typedef struct Queue {
 
 /* Function Declarations: */
 Queue* initialize();
-void enqueue(Queue*,tcb* threadControlBlock);
+tcb* initializeTCB();
+void enqueue(Queue*, tcb* threadControlBlock);
 tcb* dequeue(Queue*);
 tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
 tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
