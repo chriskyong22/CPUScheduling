@@ -8,7 +8,7 @@
 
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
-#define THREAD_STACK_SIZE 1024*64
+#define THREAD_STACK_SIZE SIGSTKSZ
 #define MAX_PRIORITY 10;
 rpthread_t threadID = 0;
 uint mutexID = 1;
@@ -18,41 +18,39 @@ Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
 tcb* scheduler = NULL; //NOT SURE WHAT TO DO HERE still
 tcb* current = NULL;
+struct itimerval timer = {0};
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
 
-   // create Thread Control Block
-   // create and initialize the context of this thread
-   // allocate space of stack for this thread to run
-   // after everything is all set, push this thread int
-   // YOUR CODE HERE
-   
-   //If the scheduler has not been initialized meaning there are no threads running, should it create the scheduler now first then try to create other threads?
-	tcb* threadControlBlock = initializeTCB();
-	getcontext(&(threadControlBlock->context));
-	ucontext_t* threadContext = &(threadControlBlock->context);
-	threadContext->uc_link = 0; //Not sure if I should link to scheduler context or how this should work
-	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
-	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
-	if(arg != NULL){
-		makecontext(threadContext, (void*)function, 1, arg);
-	}else{
-		makecontext(threadContext, (void*)function, 0);
-	}
-	
-   	threadControlBlock->stack = threadContext->uc_stack;
-   	if (scheduler == NULL) {
-   		scheduler = threadControlBlock;
-   	} else {
-   		enqueue(runQueue, threadControlBlock);
-   	}
-   	return 0;
+	// create Thread Control Block
+	// create and initialize the context of this thread
+	// allocate space of stack for this thread to run
+	// after everything is all set, push this thread int
+	// YOUR CODE HERE
+
+	//If the scheduler has not been initialized meaning there are no threads running, should it create the scheduler now first then try to create other threads?
+	if(scheduler == NULL) {
+		// First time.
+		tcb* mainTCB = initializeTCB();
+		makecontext(&(mainTCB->context), (void*) main, 1, arg); //How do I set this thread to be the main execution? 
+		scheduler = initializeTCB();
+		makecontext(&(scheduler->context), (void*) schedule, 0);
+		mainTCB->context.uc_link = &(scheduler->context);
+		initializeSignalHandler();
+		initializeTimer();
+	} 
+	tcb* newThreadTCB = initializeTCB();
+	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
+	enqueue(runQueue, newThreadTCB);
+
+	return 0;
 };
 
 tcb* initializeTCB() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
+	
+	//Initializes the attributes of the TCB.
 	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
 	threadControlBlock->joinTID = -1;  
 	threadControlBlock->priority = MAX_PRIORITY;
@@ -60,10 +58,44 @@ tcb* initializeTCB() {
 	threadControlBlock->runtime = 0;
 	threadControlBlock->desiredMutex = -1;
 	threadControlBlock->exitValue = NULL;
+	
+	//Initializes the context of the TCB.
+	getcontext(&(threadControlBlock->context));
+	ucontext_t* threadContext = &(threadControlBlock->context);
+	if (scheduler == NULL) {
+		threadContext->uc_link = NULL;
+	} else {
+		threadContext->uc_link = &(scheduler->context); //Not sure if I should link to scheduler context or how this should work
+	}
+	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
+	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
+	threadControlBlock->stack = threadContext->uc_stack;
+	
 	return threadControlBlock;
 }
 
-Queue* initialize() {
+void initializeSignalHandler() {
+	struct sigaction signalHandler = {0};
+	signalHandler.sa_handler = &timer_interrupt_handler;
+	sigaction(SIGPROF, &signalHandler, NULL);
+}
+
+void initializeTimer() {
+	//The initial and reset values of the timer. 
+	timer.it_interval.tv_sec = (TIMESLICE * 1000) / 100000;
+	timer.it_interval.tv_usec = (TIMESLICE * 1000) % 100000;
+	
+	//How long the timer should run before outputting a SIGPROF signal. 
+	// (The timer will count down from this value and once it hits 0, output a signal and reset to the IT_INTERVAL value)
+	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
+	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
+	printf("[D]: The timer has been initialized. Time interval is %d seconds, %d microseconds.", (TIMESLICE * 1000) / 100000, (TIMESLICE * 1000) % 100000);
+	
+	setitimer(ITIMER_PROF, &timer, NULL);
+}
+ 
+Queue* initializeQueue() {
 	Queue* queue = malloc(sizeof(Queue) * 1); 
 	queue->size = 0;
 	queue->head = NULL;
@@ -166,6 +198,15 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 	return -1;
 }
 
+void timer_interrupt_handler(int signum) {
+	if(signum == SIGPROF) {
+		printf("[D]: Timer interrupt happened! Switching to Scheduler via setcontext\n");
+		setcontext(&(scheduler->context));
+	} else {
+		printf("[D]: Random Signal occurred but was not the timer, %d\n", signum);
+	}
+}
+
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {
 	// change thread state from Running to Ready
@@ -175,6 +216,7 @@ int rpthread_yield() {
 	// YOUR CODE HERE
 	current->status = READY;
 	enqueue(runQueue, current);
+	//TODO: STOP TIMER INTERRUPT before swapping to scheduler
 	swapcontext(&(current->context), &(scheduler->context));
 
 	return 0;
@@ -355,18 +397,18 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
-	if(scheduler == NULL){
-		//Shouldn't it create a thread that is the scheduler? but Schedule() is not void* void*...?
-		rpthread_create(&threadID, NULL, (void*) &schedule, NULL); 
-	}
 
-// schedule policy
-#ifndef MLFQ
-	// Choose RR
-#else 
-	// Choose MLFQ
-#endif
-
+	// schedule policy
+	#ifndef MLFQ
+		// Choose RR
+		sched_rr();
+	#else 
+		// Choose MLFQ
+		sched_mlfq();
+	#endif
+	
+	// TO ADD reset timer.
+	setcontext(&(current->context));
 }
 
 /* Round Robin (RR) scheduling algorithm */

@@ -30,6 +30,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ucontext.h>
+#include <sys/time.h>
+#include <signal.h>
 
 typedef uint rpthread_t;
 
@@ -96,6 +98,15 @@ void enqueue(Queue*, tcb* threadControlBlock);
 tcb* dequeue(Queue*);
 tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
 tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
+int checkExistBlockedQueue(Queue* queue, int mutexID);
+void initializeTimer();
+void initializeSignalHandler();
+void timer_interrupt_handler(int signum);
+
+static void sched_mlfq();
+static void sched_rr();
+static void schedule();
+
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);
