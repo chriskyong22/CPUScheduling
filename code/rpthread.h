@@ -32,6 +32,7 @@
 #include <ucontext.h>
 #include <sys/time.h>
 #include <signal.h>
+#include <errno.h>
 
 typedef uint rpthread_t;
 

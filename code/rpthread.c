@@ -9,7 +9,7 @@
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
 #define THREAD_STACK_SIZE SIGSTKSZ
-#define MAX_PRIORITY 10;
+#define MAX_PRIORITY 4;
 rpthread_t threadID = 0;
 uint mutexID = 1;
 Queue* runQueue = NULL;
@@ -33,12 +33,12 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	if(scheduler == NULL) {
 		// First time.
 		tcb* mainTCB = initializeTCB();
-		makecontext(&(mainTCB->context), (void*) main, 1, arg); //How do I set this thread to be the main execution? 
 		scheduler = initializeTCB();
 		makecontext(&(scheduler->context), (void*) schedule, 0);
 		mainTCB->context.uc_link = &(scheduler->context);
 		initializeSignalHandler();
 		initializeTimer();
+		enqueue(runQueue, mainTCB);
 	} 
 	tcb* newThreadTCB = initializeTCB();
 	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
@@ -49,7 +49,10 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 
 tcb* initializeTCB() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
-	
+	if(threadControlBlock == NULL) {
+		perror("[D]: Failed to allocate space for the TCB.\n");
+		exit(-1);
+	}
 	//Initializes the attributes of the TCB.
 	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
 	threadControlBlock->joinTID = -1;  
@@ -60,14 +63,22 @@ tcb* initializeTCB() {
 	threadControlBlock->exitValue = NULL;
 	
 	//Initializes the context of the TCB.
-	getcontext(&(threadControlBlock->context));
-	ucontext_t* threadContext = &(threadControlBlock->context);
+	if(getcontext(&(threadControlBlock->context)) == -1){
+		perror("[D]: Failed to initialize the context of the TCB.\n");
+		exit(-1);
+	};
+	
+	ucontext_t* threadContext = &(threadControlBlock->context); //This is created just to make it easier to use it without having to clutter the code with &(theardControlBlock->context)
 	if (scheduler == NULL) {
 		threadContext->uc_link = NULL;
 	} else {
-		threadContext->uc_link = &(scheduler->context); //Not sure if I should link to scheduler context or how this should work
+		threadContext->uc_link = &(scheduler->context); //Not sure if I should link to scheduler context (if the thread returns or exits, it should probably then go to scheduler context/thread since it is done running.) 
 	}
 	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+	if(threadContext->uc_stack.ss_sp == NULL) {
+		perror("[D]: Failed to allocate space for the stack of the TCB.\n");
+		exit(-1);
+	}
 	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
 	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
 	threadControlBlock->stack = threadContext->uc_stack;
@@ -97,6 +108,10 @@ void initializeTimer() {
  
 Queue* initializeQueue() {
 	Queue* queue = malloc(sizeof(Queue) * 1); 
+	if(queue == NULL) {
+		perror("[D]: Failed to allocate space for a queue.\n");
+		exit(-1);
+	}
 	queue->size = 0;
 	queue->head = NULL;
 	queue->tail = NULL;
@@ -109,6 +124,10 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
 		return;
 	}
 	QueueNode* newNode = malloc(sizeof(QueueNode) * 1);
+	if(newNode == NULL) {
+		perror("[D]: Failed to allocate space for a queueNode.\n");
+		exit(-1);
+	}
    	newNode->node = threadControlBlock;
    	newNode->next = NULL;
    	if (queue->head == NULL) {
