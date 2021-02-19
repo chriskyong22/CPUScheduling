@@ -135,7 +135,7 @@ void initializeTimer() {
 	// (The timer will count down from this value and once it hits 0, output a signal and reset to the IT_INTERVAL value)
 	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
 	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
-	printf("[D]: The timer has been initialized. Time interval is %d seconds, %d microseconds.", (TIMESLICE * 1000) / 100000, (TIMESLICE * 1000) % 100000);
+	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	
 	setitimer(ITIMER_PROF, &timer, NULL);
 }
@@ -252,9 +252,10 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 }
 
 void timer_interrupt_handler(int signum) {
-	if(signum == SIGPROF) {
-		printf("[D]: Timer interrupt happened! Switching to Scheduler via setcontext\n");
-		setcontext(&(scheduler->context));
+	if (signum == SIGPROF) {
+		printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
+		disableTimer();
+		swapcontext(&(current->context), &(scheduler->context));
 	} else {
 		printf("[D]: Random Signal occurred but was not the timer, %d\n", signum);
 	}
@@ -271,7 +272,7 @@ void disableTimer() {
 void startTimer() { //Should it just call initialize timer instead?
 	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
 	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
-	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.", timer.it_value.tv_sec, timer.it_value.tv_usec);
+	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	setitimer(ITIMER_PROF, &timer, NULL);
 } 
 
@@ -284,7 +285,7 @@ int rpthread_yield() {
 	// YOUR CODE HERE
 	current->status = READY;
 	enqueue(runQueue, current);
-	//TODO: STOP TIMER INTERRUPT before swapping to scheduler
+	disableTimer();
 	swapcontext(&(current->context), &(scheduler->context));
 
 	return 0;
@@ -377,6 +378,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
 		    enqueue(blockedQueue, current); 
+		    disableTimer();
 		    swapcontext(&(current->context), &(scheduler->context)); 
 		    //Shouldn't it call schedule now?
 		    
@@ -475,7 +477,7 @@ static void schedule() {
 		sched_mlfq();
 	#endif
 	
-	// TO ADD reset timer.
+	startTimer();
 	setcontext(&(current->context));
 }
 
