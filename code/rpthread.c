@@ -107,11 +107,7 @@ tcb* initializeTCB() {
 	};
 	
 	ucontext_t* threadContext = &(threadControlBlock->context); //This is created just to make it easier to use it without having to clutter the code with &(theardControlBlock->context)
-	if (scheduler == NULL) {
-		threadContext->uc_link = NULL;
-	} else {
-		threadContext->uc_link = &(scheduler->context); //Not sure if I should link to scheduler context (if the thread returns or exits, it should probably then go to scheduler context/thread since it is done running.) 
-	}
+	threadContext->uc_link = (scheduler == NULL) ? NULL : &(scheduler->context);
 	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 	if(threadContext->uc_stack.ss_sp == NULL) {
 		perror("[D]: Failed to allocate space for the stack of the TCB.\n");
@@ -263,6 +259,21 @@ void timer_interrupt_handler(int signum) {
 		printf("[D]: Random Signal occurred but was not the timer, %d\n", signum);
 	}
 }
+
+void disableTimer() {
+	//To disable, set it_value to 0, regardless of it_interval. (According to the man pages)
+	timer.it_value.tv_sec = 0;
+	timer.it_value.tv_usec = 0;
+	setitimer(ITIMER_PROF, &timer, NULL);
+	printf("[D]: The timer has been disabled!\n");
+} 
+
+void startTimer() { //Should it just call initialize timer instead?
+	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
+	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
+	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.", timer.it_value.tv_sec, timer.it_value.tv_usec);
+	setitimer(ITIMER_PROF, &timer, NULL);
+} 
 
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {

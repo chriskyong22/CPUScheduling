@@ -104,6 +104,8 @@ int checkExistBlockedQueue(Queue* queue, int mutexID);
 void initializeTimer();
 void initializeSignalHandler();
 void timer_interrupt_handler(int signum);
+void startTimer();
+void disableTimer();
 
 static void sched_mlfq();
 static void sched_rr();
