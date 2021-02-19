@@ -206,9 +206,11 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		current->joinTID = thread;
 		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread. 
 	} else {
+		current->status = READY;
 		current->joinTID = -1;	
 		*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		free(exitThread);
+		enqueue(runQueue, current);
 	}
 	
 	return 0;
@@ -240,7 +242,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         // YOUR CODE HERE
         
         
-        //Where to find the built-in test and set atomic function....?????? I found only c++ versions 
+        //Where to find the built-in test and set atomic function....?????? I found only c++ versions is it __sync_test_and_set?
         // So I'm just going to use int as the locks even though this is not really test_and_set but w/e
        	if(mutex == NULL){
        		return -1;
@@ -251,11 +253,12 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    current->desiredMutex = mutex->id;
 		    enqueue(blockedQueue, current); 
 		    swapcontext(&(current->context), &(scheduler->context)); 
-		    //Shouldn't it call schedule now?.... what is going on?
+		    //Shouldn't it call schedule now?
 		    
         } else if (mutex->lock == '0') {
         	mutex->lock = '1'; 
         	mutex->tid = current->id;
+        	current->desiredMutex = mutex->id; // Might be able to remove this instruction since technically this thread has this mutex and therefore to unlock the mutex, we can check the tid of the mutex to see if the thread can unlock it.
         	return 0;
         } else {
         	
@@ -289,6 +292,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		}
 		mutex->lock = '0';
 		mutex->tid = -1;
+		current->desiredMutex = -1; // If the current->desiredMutex = mutex->id instruction on line 261 is removed, remove this line too.
 		return 0;
 	} else if (mutex->lock == '0') {
 	
