@@ -47,12 +47,13 @@ typedef struct threadControlBlock {
 	int joinTID; //The threadID of which thread THIS thread is waiting on to join with
 	int priority;
 	int status;
-	int runtime;
-	int desiredMutex;
+	int runtime; 
+	int desiredMutex; // the Mutex it is waiting on/or have 
 	ucontext_t context;
 	stack_t stack;
 	void* exitValue;
 } tcb; 
+
 
 /* mutex struct definition */
 typedef struct rpthread_mutex_t {
@@ -78,6 +79,15 @@ typedef struct Queue {
 	QueueNode* tail;
 	int size;
 } Queue;
+
+typedef struct schedulerNode {
+	uint numberOfQueues; 
+	Queue* priorityQueues; 
+	tcb* scheduler; //Do we even need a scheduler thread, why can't we just call the schedule function if the thread is exit/blocked/or waiting for a join?
+	tcb* currentRunning; //The thread that is currently running, should be popped off the priorityQueue 
+	// Since RR and MLFQ both have Exit/Join/Blocked Queues, can it just be a global variable and not be stored in this struct?
+	
+} schedulerNode; 
 
 /* Function Declarations: */
 Queue* initialize();
