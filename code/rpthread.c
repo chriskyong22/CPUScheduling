@@ -18,6 +18,8 @@ Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
 tcb* scheduler = NULL; //NOT SURE WHAT TO DO HERE still
 tcb* current = NULL;
+long int seconds = 0;
+long int microseconds = 0;
 struct itimerval timer = {0};
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -275,6 +277,17 @@ void startTimer() { //Should it just call initialize timer instead?
 	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	setitimer(ITIMER_PROF, &timer, NULL);
 } 
+
+void pauseTimer() {
+	struct itimerval zero = {0};
+	setitimer(ITIMER_PROF, &zero, &timer);
+	printf("[D]: The timer has been paused!\n");
+}
+
+void resumeTimer() { 
+	setitimer(ITIMER_PROF, &timer, NULL);
+	printf("[D]: The timer is resuming!\n");
+}
 
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {

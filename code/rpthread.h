@@ -106,6 +106,8 @@ void initializeSignalHandler();
 void timer_interrupt_handler(int signum);
 void startTimer();
 void disableTimer();
+void pauseTimer();
+void resumeTimer();
 
 static void sched_mlfq();
 static void sched_rr();
