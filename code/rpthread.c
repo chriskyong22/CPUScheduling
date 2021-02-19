@@ -151,6 +151,21 @@ tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	return NULL;
 }
 
+int checkExistBlockedQueue(Queue* queue, int mutexID) {
+	if(queue == NULL || queue->head == NULL) {
+		return -1;
+	}
+	QueueNode* currentNode = queue->head;
+	// Will traverse through all the node
+	while(currentNode != NULL) {
+		if(currentNode->node->desiredMutex == mutexID) {
+			return 1;
+		}
+		currentNode = currentNode->next;
+	}
+	return -1;
+}
+
 /* give CPU possession to other user-level threads voluntarily */
 int rpthread_yield() {
 	// change thread state from Running to Ready
@@ -284,7 +299,8 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		for (int index = 0; index < maxthreads; index++) {
 			tcb* currentThread = dequeue(blockedQueue);
 			//Means this thread requires this mutex, and now the mutex is free, can be removed from the block list and placed on the runQueue
-			if (currentThread->desiredMutex == mutex->id) { 
+			if (currentThread->desiredMutex == mutex->id) {
+				currentThread->status = READY; 
 				enqueue(runQueue, currentThread);
 			} else {
 				enqueue(blockedQueue, currentThread);
@@ -310,7 +326,17 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 		return -1;
 	}
 	// Should we be able to free mutexes that are in use or required/wanted by threads?
-	free(mutex);
+	int threadWaiting = checkExistBlockedQueue(blockedQueue, mutex->id);
+	char isLocked = mutex->lock;
+	if(threadWaiting == 1 || isLocked == '1') {
+		//A thread is waiting or using this mutex, what to do? Currently going to just return -1 or error. 
+		return -1;
+	} else {
+		// No thread is waiting for this mutex, can destroy freely
+		// Can't they pass in a non-malloced mutex? Should I leave it so the client has to free the mutex if they malloced it?
+		free(mutex);
+	}
+	
 	return 0;
 };
 
