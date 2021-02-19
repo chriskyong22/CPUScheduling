@@ -32,10 +32,30 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	//If the scheduler has not been initialized meaning there are no threads running, should it create the scheduler now first then try to create other threads?
 	if(scheduler == NULL) {
 		// First time.
-		tcb* mainTCB = initializeTCB();
 		scheduler = initializeTCB();
 		makecontext(&(scheduler->context), (void*) schedule, 0);
-		mainTCB->context.uc_link = &(scheduler->context);
+		tcb* mainTCB = initializeTCBHeaders();
+		//Because mainContext is obtained from getContext(), it will resume at the getContext call (see getContext(2) man page) which is initializeTCB() therefore it will realloc the stack and everything but we do not want that so we have to recall getcontext in here.
+		//If we were able to use makeContext(), then when we return to the thread, it would run the function specified in the makeContext() which is why the other threads are fine except Main thread.
+		if(getcontext(&mainTCB->context) == -1) {
+			perror("[D]: Failed to initialize the context of the mainTCB.\n");
+			return -1;
+		}
+		if(mainTCB->context.uc_link == NULL) {
+			printf("[D]: This place should only be accessed once! If it is accessed more than once, this is an error because the main thread is now mallocing a new stack each time this thread runs.\n");
+			ucontext_t* threadContext = &(mainTCB->context); 
+			threadContext->uc_link = &(scheduler->context);
+			threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+			if(threadContext->uc_stack.ss_sp == NULL) {
+				perror("[D]: Failed to allocate space for the stack of the MAIN TCB.\n");
+				exit(-1);
+			}
+			threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
+			threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
+			mainTCB->stack = threadContext->uc_stack;
+		} else {
+			return 0;
+		}
 		initializeSignalHandler();
 		initializeTimer();
 		enqueue(runQueue, mainTCB);
@@ -47,7 +67,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	return 0;
 };
 
-tcb* initializeTCB() {
+tcb* initializeTCBHeaders() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
 	if(threadControlBlock == NULL) {
 		perror("[D]: Failed to allocate space for the TCB.\n");
@@ -55,6 +75,24 @@ tcb* initializeTCB() {
 	}
 	//Initializes the attributes of the TCB.
 	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
+	threadControlBlock->joinTID = -1;  
+	threadControlBlock->priority = MAX_PRIORITY;
+	threadControlBlock->status = READY;
+	threadControlBlock->runtime = 0;
+	threadControlBlock->desiredMutex = -1;
+	threadControlBlock->exitValue = NULL;
+	return threadControlBlock;
+}
+
+tcb* initializeTCB() {
+	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
+	if(threadControlBlock == NULL) {
+		perror("[D]: Failed to allocate space for the TCB.\n");
+		exit(-1);
+	}
+	
+	//Initializes the attributes of the TCB.
+	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range (since id is using uint while the others is using int. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
 	threadControlBlock->joinTID = -1;  
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
