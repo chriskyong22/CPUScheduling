@@ -15,7 +15,7 @@
 #ifndef TIMESLICE
 /* defined timeslice to 5 ms, feel free to change this while testing your code
  * it can be done directly in the Makefile*/
-#define TIMESLICE 5
+#define TIMESLICE 50
 #endif
 
 #define READY 0
@@ -94,7 +94,8 @@ typedef struct schedulerNode {
 } schedulerNode; 
 
 /* Function Declarations: */
-Queue* initialize();
+Queue* initializeQueue();
+void initializeScheduleQueues();
 tcb* initializeTCB();
 tcb* initializeTCBHeaders();
 void initializeScheduler();
