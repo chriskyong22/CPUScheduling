@@ -9,17 +9,16 @@
 // INITAILIZE ALL YOUR VARIABLES HERE
 // YOUR CODE HERE
 #define THREAD_STACK_SIZE SIGSTKSZ
-#define MAX_PRIORITY 4;
+#define MAX_PRIORITY 4
 rpthread_t threadID = 0;
 uint mutexID = 1;
-Queue* runQueue = NULL;
+Queue* readyQueue = NULL;
 Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
+schedulerNode* scheduleInfo = NULL;
 tcb* scheduler = NULL; //NOT SURE WHAT TO DO HERE still
 tcb* current = NULL;
-long int seconds = 0;
-long int microseconds = 0;
 struct itimerval timer = {0};
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -30,13 +29,14 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	// allocate space of stack for this thread to run
 	// after everything is all set, push this thread int
 	// YOUR CODE HERE
-
-	//If the scheduler has not been initialized meaning there are no threads running, should it create the scheduler now first then try to create other threads?
-	if(scheduler == NULL) {
-		// First time.
+	
+	//First time being run, therefore it will have to create the main thread, new thread, and the scheduler thread.
+	if(scheduler == NULL) { 
 		scheduler = initializeTCB();
+		scheduleInfo->scheduler = scheduler;
 		makecontext(&(scheduler->context), (void*) schedule, 0);
 		tcb* mainTCB = initializeTCBHeaders();
+		scheduleInfo->current = mainTCB;
 		//Because mainContext is obtained from getContext(), it will resume at the getContext call (see getContext(2) man page) which is initializeTCB() therefore it will realloc the stack and everything but we do not want that so we have to recall getcontext in here.
 		//If we were able to use makeContext(), then when we return to the thread, it would run the function specified in the makeContext() which is why the other threads are fine except Main thread.
 		if(getcontext(&mainTCB->context) == -1) {
@@ -60,12 +60,12 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		}
 		initializeSignalHandler();
 		initializeTimer();
-		enqueue(runQueue, mainTCB);
-	} 
+	}
+	pauseTimer(); 
 	tcb* newThreadTCB = initializeTCB();
 	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
-	enqueue(runQueue, newThreadTCB);
-
+	enqueue(readyQueue, newThreadTCB);
+	resumeTimer();
 	return 0;
 };
 
@@ -120,6 +120,14 @@ tcb* initializeTCB() {
 	threadControlBlock->stack = threadContext->uc_stack;
 	
 	return threadControlBlock;
+}
+
+void initializeScheduler() {
+	scheduleInfo = malloc(sizeof(schedulerNode) * 1);
+	scheduleInfo->numberOfQueues = MAX_PRIORITY;
+	scheduleInfo->priorityQueues = calloc(MAX_PRIORITY, sizeof(Queue)); // Hoping this zeros out all the queues, if not have to traverse each and memset to '0'
+	scheduleInfo->scheduler = NULL;
+	scheduleInfo->current = NULL;
 }
 
 void initializeSignalHandler() {
@@ -238,6 +246,30 @@ tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	return NULL;
 }
 
+tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID) {
+	if(queue == NULL || queue->head == NULL) {
+		return NULL;
+	}
+	QueueNode* currentNode = queue->head;
+	// Checking if the first node has the data
+	if(currentNode->node->desiredMutex == mutexID){
+		return dequeue(queue);
+	}
+	// Will traverse through all the node and check except the 1st node 
+	while(currentNode->next != NULL) {
+		if(currentNode->next->node->desiredMutex == mutexID) {
+			tcb* threadControlBlock = currentNode->next->node;
+			QueueNode* temp = currentNode->next;
+			currentNode->next = currentNode->next->next;
+			free(temp);
+			queue->size--;
+			return threadControlBlock;
+		}
+		currentNode = currentNode->next;
+	}
+	return NULL;
+}
+
 int checkExistBlockedQueue(Queue* queue, int mutexID) {
 	if(queue == NULL || queue->head == NULL) {
 		return -1;
@@ -296,8 +328,7 @@ int rpthread_yield() {
 	// switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	current->status = READY;
-	enqueue(runQueue, current);
+	// Scheduler will change the status to READY 
 	disableTimer();
 	swapcontext(&(current->context), &(scheduler->context));
 
@@ -319,7 +350,7 @@ void rpthread_exit(void *value_ptr) {
 	if (joinThread != NULL) {
 		joinThread->joinTID = -1;
 		joinThread->exitValue = current->exitValue;
-		enqueue(runQueue, joinThread);
+		enqueue(readyQueue, joinThread);
 		//Can we free current now?
 		free(current);
 	} else {
@@ -349,7 +380,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		current->joinTID = -1;	
 		*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		free(exitThread);
-		enqueue(runQueue, current);
+		enqueue(readyQueue, current);
 	}
 	
 	return 0;
@@ -398,7 +429,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         } else if (mutex->lock == '0') {
         	mutex->lock = '1'; 
         	mutex->tid = current->id;
-        	current->desiredMutex = mutex->id; // Might be able to remove this instruction since technically this thread has this mutex and therefore to unlock the mutex, we can check the tid of the mutex to see if the thread can unlock it.
+        	// current->desiredMutex = mutex->id; // Might be able to remove this instruction since technically this thread has this mutex and therefore to unlock the mutex, we can check the tid of the mutex to see if the thread can unlock it.
         	return 0;
         } else {
         	
@@ -413,20 +444,25 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	// so that they could compete for mutex later.
 
 	// YOUR CODE HERE
+	pauseTimer();
 	if (mutex == NULL) {
 		return -1;
 	}
 	
 	//Checking if the thread has the mutex so other threads cannot just unlock mutexes they do not have 
-	if (mutex->lock == '1' && current->id == mutex->tid) {
-		QueueNode* currentBlock = blockedQueue->head;
+	// We are going to assume if the user calls this, the mutex is already locked so we don't need to check the lock field, (doing this so when it will work with test_and_set since test_and_set sets the value and returns the old value of what it was
+	if (current->id == mutex->tid) {
+		//Note the problem with this for loop is that only the threads with the highest priority will run before the lower priority threads and thus obtain the lock before the lower priority threads 
+		//Maybe we should just do first come, first serve for mutexes, I'm not entirely sure if pthread does this but in the book, they do this.
+		/**
 		int maxthreads = blockedQueue->size; 
-		for (int index = 0; index < maxthreads; index++) {
+		QueueNode* currentBlock = blockedQueue->head;
+		for (int index = 0; index < maxthreads; index++) { 
 			tcb* currentThread = dequeue(blockedQueue);
-			//Means this thread requires this mutex, and now the mutex is free, can be removed from the block list and placed on the runQueue
+			//Means this thread requires this mutex, and now the mutex is free, can be removed from the block list and placed on the readyQueue
 			if (currentThread->desiredMutex == mutex->id) {
 				currentThread->status = READY; 
-				enqueue(runQueue, currentThread);
+				enqueue(readyQueue, currentThread);
 			} else {
 				enqueue(blockedQueue, currentThread);
 			}
@@ -434,12 +470,17 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		mutex->lock = '0';
 		mutex->tid = -1;
 		current->desiredMutex = -1; // If the current->desiredMutex = mutex->id instruction on line 261 is removed, remove this line too.
+		*/
+		tcb* unblockedThread = findFirstOfBlockedQueue(blockedQueue, mutex->id);
+		if(unblockedThread != NULL) {
+			unblockedThread->status = READY;
+			unblockedThread->desiredMutex = -1;
+			enqueue(readyQueue, unblockedThread);
+		}
+		resumeTimer();
 		return 0;
-	} else if (mutex->lock == '0') {
-	
-	} else {
-	
 	}
+	resumeTimer(); 
 	return -1;
 };
 
