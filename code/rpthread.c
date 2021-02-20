@@ -34,8 +34,8 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	// YOUR CODE HERE
 	
 	//First time being run, therefore it will have to create the main thread, new thread, and the scheduler thread.
-	printf("[D]: Creating new thread.\n"); 
 	if(scheduler == NULL) {
+		printf("Initial Setup\n");
 		initializeScheduler();
 		initializeScheduleQueues();  
 		scheduler = initializeTCB();
@@ -158,13 +158,13 @@ void initializeSignalHandler() {
 
 void initializeTimer() {
 	//The initial and reset values of the timer. 
-	timer.it_interval.tv_sec = (TIMESLICE * 1000) / 100000;
-	timer.it_interval.tv_usec = (TIMESLICE * 1000) % 100000;
+	timer.it_interval.tv_sec = (TIMESLICE * 1000) / 1000000;
+	timer.it_interval.tv_usec = (TIMESLICE * 1000) % 1000000;
 	
 	//How long the timer should run before outputting a SIGPROF signal. 
 	// (The timer will count down from this value and once it hits 0, output a signal and reset to the IT_INTERVAL value)
-	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
-	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
+	timer.it_value.tv_sec = (TIMESLICE * 1000) / 1000000;
+	timer.it_value.tv_usec = (TIMESLICE * 1000) % 1000000;
 	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds. The Time remaining is %ld seconds, %ld microseconds.\n", timer.it_interval.tv_sec, timer.it_interval.tv_usec, timer.it_value.tv_sec, timer.it_value.tv_usec);
 	
 	setitimer(ITIMER_PROF, &timer, NULL);
@@ -334,8 +334,8 @@ void disableTimer() {
 } 
 
 void startTimer() { //Should it just call initialize timer instead?
-	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
-	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
+	timer.it_value.tv_sec = (TIMESLICE * 1000) / 1000000;
+	timer.it_value.tv_usec = (TIMESLICE * 1000) % 1000000;
 	//printf("[D]: The timer is starting again. Time interval is %ld seconds, %ld microseconds.\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	setitimer(ITIMER_PROF, &timer, NULL);
 } 
@@ -402,6 +402,7 @@ void rpthread_exit(void *value_ptr) {
 	} else {
 		printf("[D]: Found no thread that is waiting on this thread %d, added to the exit queue\n", current->id);
 		enqueue(exitQueue, current);
+		getcontext(&(current->context));
 	}
 	current = NULL;
 	setcontext(&(scheduler->context));
