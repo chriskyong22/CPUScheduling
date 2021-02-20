@@ -10,7 +10,7 @@
 // YOUR CODE HERE
 #define THREAD_STACK_SIZE SIGSTKSZ
 #define MAX_PRIORITY 4
-#define BOOST_AFTER_TIME_SLICE 5
+#define BOOST_AFTER_TIME_SLICE 50
 rpthread_t threadID = 0;
 uint mutexID = 1;
 Queue* readyQueue = NULL;
@@ -585,6 +585,7 @@ static void sched_mlfq() {
 	
 	
 	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
+	scheduleInfo->timeSlices++;
 	int readyQueueSize = readyQueue->size;
 	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
 		tcb* readyTCB = dequeue(readyQueue);
