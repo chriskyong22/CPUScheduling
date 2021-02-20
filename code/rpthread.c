@@ -41,8 +41,6 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		scheduleInfo->scheduler = scheduler;
 		makecontext(&(scheduler->context), (void*) schedule, 0);
 		tcb* mainTCB = initializeTCBHeaders();
-		mainTCB->id = 2500;
-		threadID = 0;
 		printf("Main thread %d\n", mainTCB->id);
 		scheduleInfo->current = mainTCB;
 		current = scheduleInfo->current;
@@ -71,8 +69,9 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeTimer();
 	}
 	pauseTimer();
-	printf("[D]: Creating new child thread.\n"); 
+	printf("[D]: Creating new child thread.\n");
 	tcb* newThreadTCB = initializeTCB();
+	(*thread) = newThreadTCB->id;
 	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
 	enqueue(readyQueue, newThreadTCB);
 	printf("Entered PThread Create Exit\n");
@@ -394,17 +393,13 @@ void rpthread_exit(void *value_ptr) {
 		joinThread->exitValue = current->exitValue;
 		printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
 		enqueue(readyQueue, joinThread);
-		printf("[D]: Freeing exit thread stack, no longer required?\n");
+		printf("[D]: Freeing exit thread, no longer required?\n");
 		free(current->context.uc_stack.ss_sp);
-		current->context.uc_stack.ss_sp = NULL;
-		/**
 		free(current);
-		current = NULL;
-		*/
 	} else {
 		printf("[D]: Found no thread that is waiting on this thread %d, added to the exit queue\n", current->id);
+		enqueue(exitQueue, current);
 	}
-	enqueue(exitQueue, current);
 	current = NULL;
 	setcontext(&(scheduler->context));
 };
@@ -447,9 +442,11 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		if(value_ptr != NULL) {	
 			*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		}
-		enqueue(exitQueue, exitThread);
-		printf("[D]: Re-added Thread %d to the exit queue!\n", exitThread->id);
-		printQueue(exitQueue);
+		free(exitThread->context.uc_stack.ss_sp);
+		free(exitThread);
+		//enqueue(exitQueue, exitThread);
+		//printf("[D]: Re-added Thread %d to the exit queue!\n", exitThread->id);
+		//printQueue(exitQueue);
 	}
 	resumeTimer();
 	return 0;
@@ -622,7 +619,7 @@ static void schedule() {
 		sched_rr();
 	#else 
 		// Choose MLFQ
-		printf("[D]: MLFQ\n");
+		//printf("[D]: MLFQ\n");
 		sched_mlfq();
 	#endif
 	
@@ -673,11 +670,15 @@ static void sched_mlfq() {
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
 		for(int priorityQueueLevel = 0; priorityQueueLevel < MAX_PRIORITY - 1; priorityQueueLevel++) {
 			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
-			readyTCB->priority += 1;
-			enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+			while(readyTCB != NULL){
+				readyTCB->priority += 1;
+				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+				readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
+			}
 		}
 		scheduleInfo->timeSlices = 0;
 	}
+	
 	//If the current thread used the whole time slice, decrease its priority.
 	if(scheduleInfo->usedEntireTimeSlice == '1') {
 		if(current != NULL && current->priority != 1) {

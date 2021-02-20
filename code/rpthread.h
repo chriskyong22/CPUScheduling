@@ -11,7 +11,7 @@
 
 /* To use Linux pthread Library in Benchmark, you have to comment the USE_RTHREAD macro */
 #define USE_RTHREAD 1
-
+#define MLFQ 
 #ifndef TIMESLICE
 /* defined timeslice to 5 ms, feel free to change this while testing your code
  * it can be done directly in the Makefile*/
