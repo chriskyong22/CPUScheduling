@@ -31,7 +31,8 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	// YOUR CODE HERE
 	
 	//First time being run, therefore it will have to create the main thread, new thread, and the scheduler thread.
-	if(scheduler == NULL) { 
+	if(scheduler == NULL) {
+		initializeScheduler();  
 		scheduler = initializeTCB();
 		scheduleInfo->scheduler = scheduler;
 		makecontext(&(scheduler->context), (void*) schedule, 0);
@@ -286,12 +287,12 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 }
 
 void timer_interrupt_handler(int signum) {
+	disableTimer();
 	if (signum == SIGPROF) {
 		printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
-		disableTimer();
 		swapcontext(&(current->context), &(scheduler->context));
 	} else {
-		printf("[D]: Random Signal occurred but was not the timer, %d\n", signum);
+		perror("[D]: Random Signal occurred but was not the timer. This should never happen??? Signal caught: %d\n", signum);
 	}
 }
 
@@ -340,6 +341,7 @@ void rpthread_exit(void *value_ptr) {
 	// Deallocated any dynamic memory created when starting this thread
 	
 	// YOUR CODE HERE
+	disableTimer();
 	if (value_ptr != NULL) {
 		current->exitValue = value_ptr; //Need to set to return value but how?
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
@@ -356,6 +358,7 @@ void rpthread_exit(void *value_ptr) {
 	} else {
 		enqueue(exitQueue, current);
 	}
+	setcontext(&(scheduler->context));
 };
 
 
@@ -366,23 +369,25 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
-	
+	pauseTimer();
 	//According to how PTHREAD works, threads cannot join on the same thread meaning once a thread is joined on, the joined thread's pthread struct should be freed and before that should return the retval to the thread that is doing the joinning  
 	//Join threads are taken off the run queue because it wastes run time and should only resume when if the thread exits right? Therefore Two cases: Thread Exits then another thread attempts to join or threads attempts to join then thread exits? Therefore we have to check the exit queue in here to see if the thread has already exit and check in the exit, if there is a thread waiting to join on it?
 	// What happens if a thread attempts to join but the thread does not exist or already exitted, should it just be stuck forever on the join queue?
 	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
-	if(exitThread == NULL){
+	if(exitThread == NULL) {
 		current->status = WAITING;
 		current->joinTID = thread;
-		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread. 
+		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread.
+		disableTimer();
+		swapcontext(&(current->context), &(scheduler->context)); 
 	} else {
 		current->status = READY;
 		current->joinTID = -1;	
 		*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		free(exitThread);
 		enqueue(readyQueue, current);
+		resumeTimer();
 	}
-	
 	return 0;
 };
 
@@ -391,7 +396,9 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
                           const pthread_mutexattr_t *mutexattr) {
 	//initialize data structures for this mutex
 	// YOUR CODE HERE
+	pauseTimer();
 	if(mutex == NULL){
+		resumeTimer();
 		return -1;
 	}
 	
@@ -399,6 +406,7 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	mutex->id = mutexID++;
 	mutex->tid = -1; 
 	mutex->lock = '0';
+	resumeTimer();
 	return 0;
 };
 
@@ -414,7 +422,9 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         
         //Where to find the built-in test and set atomic function....?????? I found only c++ versions is it __sync_test_and_set?
         // So I'm just going to use int as the locks even though this is not really test_and_set but w/e
+        pauseTimer();
        	if(mutex == NULL){
+       		resumeTimer();
        		return -1;
        	}
        	
@@ -424,17 +434,15 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    enqueue(blockedQueue, current); 
 		    disableTimer();
 		    swapcontext(&(current->context), &(scheduler->context)); 
-		    //Shouldn't it call schedule now?
-		    
         } else if (mutex->lock == '0') {
         	mutex->lock = '1'; 
         	mutex->tid = current->id;
         	// current->desiredMutex = mutex->id; // Might be able to remove this instruction since technically this thread has this mutex and therefore to unlock the mutex, we can check the tid of the mutex to see if the thread can unlock it.
-        	return 0;
+        	resumeTimer();
         } else {
         	
         }
-        return -1;
+        return 0;
 };
 
 /* release the mutex lock */
@@ -488,7 +496,9 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 /* destroy the mutex */
 int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	// Deallocate dynamic memory created in rpthread_mutex_init
+	pauseTimer();
 	if(mutex == NULL){
+		resumeTimer();
 		return -1;
 	}
 	// Should we be able to free mutexes that are in use or required/wanted by threads?
@@ -496,13 +506,14 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	char isLocked = mutex->lock;
 	if(threadWaiting == 1 || isLocked == '1') {
 		//A thread is waiting or using this mutex, what to do? Currently going to just return -1 or error. 
+		resumeTimer();
 		return -1;
 	} else {
 		// No thread is waiting for this mutex, can destroy freely
 		// Can't they pass in a non-malloced mutex? Should I leave it so the client has to free the mutex if they malloced it?
-		free(mutex);
+		
 	}
-	
+	resumeTimer();
 	return 0;
 };
 

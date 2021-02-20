@@ -96,6 +96,7 @@ typedef struct schedulerNode {
 Queue* initialize();
 tcb* initializeTCB();
 tcb* initializeTCBHeaders();
+void initializeScheduler();
 void enqueue(Queue*, tcb* threadControlBlock);
 tcb* dequeue(Queue*);
 tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
