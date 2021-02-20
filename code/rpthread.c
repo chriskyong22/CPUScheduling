@@ -347,14 +347,16 @@ void rpthread_exit(void *value_ptr) {
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
 	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
-	free(current->context.uc_stack.ss_sp);
+	free(current->context.uc_stack.ss_sp); // Can we free this or do we still need this for a copy of the exitValue?
 	tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
 	if (joinThread != NULL) {
+		joinThread->status = READY;
 		joinThread->joinTID = -1;
 		joinThread->exitValue = current->exitValue;
 		enqueue(readyQueue, joinThread);
 		//Can we free current now?
 		free(current);
+		current = NULL;
 	} else {
 		enqueue(exitQueue, current);
 	}
@@ -380,14 +382,19 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread.
 		disableTimer();
 		swapcontext(&(current->context), &(scheduler->context)); 
+		pauseTimer();
+		if(value_ptr != NULL) {
+			*value_ptr = current->exitValue;
+		}
+		current->exitValue = NULL;
 	} else {
-		current->status = READY;
-		current->joinTID = -1;	
-		*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
+		current->joinTID = -1;
+		if(value_ptr != NULL) {	
+			*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
+		} 
 		free(exitThread);
-		enqueue(readyQueue, current);
-		resumeTimer();
 	}
+	resumeTimer();
 	return 0;
 };
 
@@ -552,6 +559,18 @@ static void sched_rr() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
+	if(scheduleInfo->priorityQueues != NULL) {
+		free(scheduleInfo->priorityQueues);
+		scheduleInfo->priorityQueues = NULL;
+		scheduleInfo->numberOfQueues = 0;
+	}
+	tcb* nextRun = dequeue(readyQueue);
+	if(nextRun != NULL){
+		if(current != NULL){
+			enqueue(readyQueue, current);
+		}
+		current = nextRun;
+	} 
 }
 
 /* Preemptive MLFQ scheduling algorithm */
@@ -560,6 +579,22 @@ static void sched_mlfq() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
+	int readyQueueSize = readyQueue->size;
+	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
+		tcb* readyTCB = dequeue(readyQueue);
+		enqueue(scheduleInfo->priorityQueues[current->priority - 1], readyTCB);
+	}
+	
+	for (int priorityQueueLevel = MAX_PRIORITY - 1; priorityQueueLevel >= 0; priorityQueueLevel--) { 
+		tcb* nextRun = dequeue(scheduleInfo->priorityQueues[priorityQueueLevel]);
+		if(nextRun != NULL) {
+			if(current != NULL) {
+				enqueue(scheduleInfo->priorityQueues[current->priority - 1], current);
+			}
+			current = nextRun;
+			break;
+		}
+	}
 }
 
 // Feel free to add any other functions you need
