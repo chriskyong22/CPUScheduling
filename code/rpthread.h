@@ -111,6 +111,7 @@ void startTimer();
 void disableTimer();
 void pauseTimer();
 void resumeTimer();
+void printQueue(Queue* queue);
 
 static void sched_mlfq();
 static void sched_rr();

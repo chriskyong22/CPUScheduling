@@ -229,6 +229,9 @@ tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	// Will traverse through all the node and check except the 1st node 
 	while(currentNode->next != NULL) {
 		if(currentNode->next->node->id == thread) {
+			if(currentNode->next == queue->tail) {
+				queue->tail = currentNode;
+			}
 			tcb* threadControlBlock = currentNode->next->node;
 			QueueNode* temp = currentNode->next;
 			currentNode->next = currentNode->next->next;
@@ -253,6 +256,9 @@ tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	// Will traverse through all the node and check except the 1st node 
 	while(currentNode->next != NULL) {
 		if(currentNode->next->node->joinTID == thread) {
+			if(currentNode->next == queue->tail) {
+				queue->tail = currentNode;
+			}
 			tcb* threadControlBlock = currentNode->next->node;
 			QueueNode* temp = currentNode->next;
 			currentNode->next = currentNode->next->next;
@@ -277,6 +283,9 @@ tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID) {
 	// Will traverse through all the node and check except the 1st node 
 	while(currentNode->next != NULL) {
 		if(currentNode->next->node->desiredMutex == mutexID) {
+			if(currentNode->next == queue->tail) {
+				queue->tail = currentNode;
+			}
 			tcb* threadControlBlock = currentNode->next->node;
 			QueueNode* temp = currentNode->next;
 			currentNode->next = currentNode->next->next;
@@ -307,7 +316,7 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 void timer_interrupt_handler(int signum) {
 	disableTimer();
 	if (signum == SIGPROF) {
-		printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
+		//printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
 		scheduleInfo->usedEntireTimeSlice = '1';
 		swapcontext(&(current->context), &(scheduler->context));
 	} else {
@@ -339,6 +348,14 @@ void pauseTimer() {
 void resumeTimer() { 
 	setitimer(ITIMER_PROF, &timer, NULL);
 	//printf("[D]: The timer is resuming!\n");
+}
+
+void printQueue(Queue* queue) {
+	QueueNode* currentNode = queue->head;
+	while(currentNode != NULL){
+		printf("Thread ID %d\n", currentNode->node->id);
+		currentNode = currentNode->next;
+	}
 }
 
 /* give CPU possession to other user-level threads voluntarily */
@@ -377,9 +394,13 @@ void rpthread_exit(void *value_ptr) {
 		joinThread->exitValue = current->exitValue;
 		printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
 		enqueue(readyQueue, joinThread);
-		printf("[D]: Freeing exit thread, no longer required\n");
+		printf("[D]: Freeing exit thread stack, no longer required?\n");
 		free(current->context.uc_stack.ss_sp);
+		current->context.uc_stack.ss_sp = NULL;
+		/**
+		free(current);
 		current = NULL;
+		*/
 	} else {
 		printf("[D]: Found no thread that is waiting on this thread %d, added to the exit queue\n", current->id);
 	}
@@ -414,20 +435,21 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		disableTimer();
 		flag = 1;
 		swapcontext(&(current->context), &(scheduler->context)); 
-		printf("[D]: Resuming thread %d, was on join queue but exit thread %d has exitted!\n", current->id, thread);
 		pauseTimer();
+		printf("[D]: Resuming thread %d, was on join queue but exit thread %d has exited!\n", current->id, thread);
 		if(value_ptr != NULL) {
 			*value_ptr = current->exitValue;
 		}
 		current->exitValue = NULL;
 	} else {
-		printf("[D]: Found exit thread for the current thread %d, freeing the exit thread.\n", current->id);
+		printf("[D]: Found exit thread %d for the current thread %d, freeing the exit thread.\n", exitThread->id, current->id);
 		current->joinTID = -1;
 		if(value_ptr != NULL) {	
 			*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		}
-		free(exitThread->context.uc_stack.ss_sp);
 		enqueue(exitQueue, exitThread);
+		printf("[D]: Re-added Thread %d to the exit queue!\n", exitThread->id);
+		printQueue(exitQueue);
 	}
 	resumeTimer();
 	return 0;
@@ -588,7 +610,7 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
-	printf("[D]: Entered Scheduler\n");
+	//printf("[D]: Entered Scheduler\n");
 	if(flag) {
 		flag = 0;
 		current = NULL;
@@ -596,7 +618,7 @@ static void schedule() {
 	// schedule policy
 	#ifndef MLFQ
 		// Choose RR
-		printf("[D]: RR\n");
+		//printf("[D]: RR\n");
 		sched_rr();
 	#else 
 		// Choose MLFQ
