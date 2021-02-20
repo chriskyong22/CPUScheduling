@@ -89,7 +89,8 @@ typedef struct schedulerNode {
 	tcb* scheduler; //Do we even need a scheduler thread, why can't we just call the schedule function if the thread is exit/blocked/or waiting for a join?
 	tcb* current; //The thread that is currently running, should be popped off the priorityQueue 
 	// Since RR and MLFQ both have Exit/Join/Blocked Queues, can it just be a global variable and not be stored in this struct?
-	
+	char usedEntireTimeSlice;
+	uint timeSlices;
 } schedulerNode; 
 
 /* Function Declarations: */

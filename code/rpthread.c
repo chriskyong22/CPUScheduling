@@ -10,6 +10,7 @@
 // YOUR CODE HERE
 #define THREAD_STACK_SIZE SIGSTKSZ
 #define MAX_PRIORITY 4
+#define BOOST_AFTER_TIME_SLICE 5
 rpthread_t threadID = 0;
 uint mutexID = 1;
 Queue* readyQueue = NULL;
@@ -129,6 +130,7 @@ void initializeScheduler() {
 	scheduleInfo->priorityQueues = calloc(MAX_PRIORITY, sizeof(Queue)); // Hoping this zeros out all the queues, if not have to traverse each and memset to '0'
 	scheduleInfo->scheduler = NULL;
 	scheduleInfo->current = NULL;
+	scheduleInfo->usedEntireTimeSlice = '0';
 }
 
 void initializeSignalHandler() {
@@ -290,9 +292,10 @@ void timer_interrupt_handler(int signum) {
 	disableTimer();
 	if (signum == SIGPROF) {
 		printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
+		scheduleInfo->usedEntireTimeSlice = '1';
 		swapcontext(&(current->context), &(scheduler->context));
 	} else {
-		perror("[D]: Random Signal occurred but was not the timer. This should never happen??? Signal caught: %d\n", signum);
+		printf("[D]: Random Signal occurred but was not the timer. This should never happen??? Signal caught: %d\n", signum);
 	}
 }
 
@@ -579,17 +582,41 @@ static void sched_mlfq() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
+	
+	
+	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
 	int readyQueueSize = readyQueue->size;
 	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
 		tcb* readyTCB = dequeue(readyQueue);
-		enqueue(scheduleInfo->priorityQueues[current->priority - 1], readyTCB);
+		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
+			readyTCB->priority += 1;
+		}
+		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
 	}
 	
+	// Boosting the priority every X time slices, should probably change to a timer 
+	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
+		for(int priorityQueueLevel = 0; priorityQueueLevel < MAX_PRIORITY - 1; priorityQueueLevel++) {
+			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
+			readyTCB->priority += 1;
+			enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+		}
+		scheduleInfo->timeSlices = 0;
+	}
+	//If the current thread used the whole time slice, decrease its priority.
+	if(scheduleInfo->usedEntireTimeSlice == '1') {
+		if(current->priority != 1) {
+			current->priority -= 1;
+		}
+		scheduleInfo->usedEntireTimeSlice = '0';
+	}
+	
+	//Find the next thread to run by searching through the highest priority queue. 
 	for (int priorityQueueLevel = MAX_PRIORITY - 1; priorityQueueLevel >= 0; priorityQueueLevel--) { 
-		tcb* nextRun = dequeue(scheduleInfo->priorityQueues[priorityQueueLevel]);
+		tcb* nextRun = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 		if(nextRun != NULL) {
 			if(current != NULL) {
-				enqueue(scheduleInfo->priorityQueues[current->priority - 1], current);
+				enqueue(&scheduleInfo->priorityQueues[current->priority - 1], current);
 			}
 			current = nextRun;
 			break;
