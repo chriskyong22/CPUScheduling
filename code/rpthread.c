@@ -18,10 +18,11 @@ Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
 schedulerNode* scheduleInfo = NULL;
-tcb* scheduler = NULL; //NOT SURE WHAT TO DO HERE still
+tcb* scheduler = NULL; 
 tcb* current = NULL;
 int flag = 1;
 struct itimerval timer = {0};
+struct itimerval zero = {0};
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -146,6 +147,7 @@ void initializeScheduler() {
 	scheduleInfo->scheduler = NULL;
 	scheduleInfo->current = NULL;
 	scheduleInfo->usedEntireTimeSlice = '0';
+	scheduleInfo->timeSlices = 0; 
 }
 
 void initializeSignalHandler() {
@@ -163,7 +165,7 @@ void initializeTimer() {
 	// (The timer will count down from this value and once it hits 0, output a signal and reset to the IT_INTERVAL value)
 	timer.it_value.tv_sec = (TIMESLICE * 1000) / 100000;
 	timer.it_value.tv_usec = (TIMESLICE * 1000) % 100000;
-	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds.\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
+	printf("[D]: The timer has been initialized. Time interval is %ld seconds, %ld microseconds. The Time remaining is %ld seconds, %ld microseconds.\n", timer.it_interval.tv_sec, timer.it_interval.tv_usec, timer.it_value.tv_sec, timer.it_value.tv_usec);
 	
 	setitimer(ITIMER_PROF, &timer, NULL);
 }
@@ -339,12 +341,13 @@ void startTimer() { //Should it just call initialize timer instead?
 } 
 
 void pauseTimer() {
-	struct itimerval zero = {0};
 	setitimer(ITIMER_PROF, &zero, &timer);
+	printf("[D]: Time Paused, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	//printf("[D]: The timer has been paused!\n");
 }
 
 void resumeTimer() { 
+	printf("[D]: Time resuming, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	setitimer(ITIMER_PROF, &timer, NULL);
 	//printf("[D]: The timer is resuming!\n");
 }
@@ -503,7 +506,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    swapcontext(&(current->context), &(scheduler->context)); 
 		    printf("[D]: Mutex has been unlocked, this thread can now run!\n");
         } else if (mutex->lock == '0') {
-        	//printf("[D]: This thread is locking this mutex!\n");
+        	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
         	mutex->lock = '1'; 
         	mutex->tid = current->id;
         	// current->desiredMutex = mutex->id; // Might be able to remove this instruction since technically this thread has this mutex and therefore to unlock the mutex, we can check the tid of the mutex to see if the thread can unlock it.
@@ -555,9 +558,13 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 			unblockedThread->status = READY;
 			unblockedThread->desiredMutex = -1;
 			enqueue(readyQueue, unblockedThread);
-		}
-		mutex->lock = '0';
-		mutex->tid = -1;
+			mutex->tid = unblockedThread->id;
+		} else {
+			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
+			mutex->lock = '0';
+			mutex->tid = -1;
+		} 
+
 		//printf("[D]: Mutex is now unlocked.\n");
 		resumeTimer();
 		return 0;
@@ -668,6 +675,7 @@ static void sched_mlfq() {
 	
 	// Boosting the priority every X time slices, should probably change to a timer 
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
+		printf("[D]: Boosting priorities!\n");
 		for(int priorityQueueLevel = 0; priorityQueueLevel < MAX_PRIORITY - 1; priorityQueueLevel++) {
 			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			while(readyTCB != NULL){

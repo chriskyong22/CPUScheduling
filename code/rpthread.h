@@ -15,7 +15,7 @@
 #ifndef TIMESLICE
 /* defined timeslice to 5 ms, feel free to change this while testing your code
  * it can be done directly in the Makefile*/
-#define TIMESLICE 50
+#define TIMESLICE 5
 #endif
 
 #define READY 0
