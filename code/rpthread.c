@@ -39,12 +39,11 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeScheduler();
 		initializeScheduleQueues();  
 		scheduler = initializeTCB();
-		scheduleInfo->scheduler = scheduler;
+		//scheduleInfo->scheduler = scheduler;
 		makecontext(&(scheduler->context), (void*) schedule, 0);
 		tcb* mainTCB = initializeTCBHeaders();
 		printf("Main thread %d\n", mainTCB->id);
-		scheduleInfo->current = mainTCB;
-		current = scheduleInfo->current;
+		current = mainTCB;
 		//Because mainContext is obtained from getContext(), it will resume at the getContext call (see getContext(2) man page) which is initializeTCB() therefore it will realloc the stack and everything but we do not want that so we have to recall getcontext in here.
 		//If we were able to use makeContext(), then when we return to the thread, it would run the function specified in the makeContext() which is why the other threads are fine except Main thread.
 		if(getcontext(&mainTCB->context) == -1) {
@@ -144,8 +143,8 @@ void initializeScheduler() {
 	scheduleInfo = malloc(sizeof(schedulerNode) * 1);
 	scheduleInfo->numberOfQueues = MAX_PRIORITY;
 	scheduleInfo->priorityQueues = calloc(MAX_PRIORITY, sizeof(Queue)); // Hoping this zeros out all the queues, if not have to traverse each and memset to '0'
-	scheduleInfo->scheduler = NULL;
-	scheduleInfo->current = NULL;
+	//scheduleInfo->scheduler = NULL;
+	//scheduleInfo->current = NULL;
 	scheduleInfo->usedEntireTimeSlice = '0';
 	scheduleInfo->timeSlices = 0; 
 }
@@ -153,7 +152,10 @@ void initializeScheduler() {
 void initializeSignalHandler() {
 	struct sigaction signalHandler = {0};
 	signalHandler.sa_handler = &timer_interrupt_handler;
-	sigaction(SIGPROF, &signalHandler, NULL);
+	if(sigaction(SIGPROF, &signalHandler, NULL) == -1) {
+		perror("[D]: Could not initialize the timer interrupt handler!\n");
+		exit(-1);
+	}
 }
 
 void initializeTimer() {
@@ -316,12 +318,14 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 
 void timer_interrupt_handler(int signum) {
 	disableTimer();
+	char debug[] = "Timer Interrupt Happened\n";
+	write(1, &debug, sizeof(debug));
 	if (signum == SIGPROF) {
 		//printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
 		scheduleInfo->usedEntireTimeSlice = '1';
 		swapcontext(&(current->context), &(scheduler->context));
 	} else {
-		printf("[D]: Random Signal occurred but was not the timer. This should never happen??? Signal caught: %d\n", signum);
+		//printf("[D]: Random Signal occurred but was not the timer. This should never happen??? Signal caught: %d\n", signum);
 	}
 }
 
@@ -434,10 +438,8 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		current->status = WAITING;
 		current->joinTID = thread;
 		//printf("[D]: Current thread is waiting, going on the join queue.\n");
-		enqueue(joinQueue, current); //Should it be on its own seperate queue (joinQueue) or in BLOCKEDQUEUE? If seperate queue then there will be less time to search since BLOCKEDQUEUE has the threads that are waiting on a mutex while this is waiting on a certain thread.
+		enqueue(joinQueue, current);
 		printf("[D]: Current thread %d has been added to the join queue.\n", current->id);
-		disableTimer();
-		flag = 1;
 		swapcontext(&(current->context), &(scheduler->context)); 
 		pauseTimer();
 		printf("[D]: Resuming thread %d, was on join queue but exit thread %d has exited!\n", current->id, thread);
@@ -502,15 +504,15 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
        	}
        	
         if(mutex->lock == '1') {
-        	printf("[D]: Current thread wants a mutex but it is already locked.\n");
+        	//printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
 		    //printf("[D]: Adding current thread to the block queue\n");
 		    enqueue(blockedQueue, current); 
-		    printf("[D]: Succesfully added current thread to the block queue\n");
-		    disableTimer();
+		    //printf("[D]: Succesfully added current thread %d to the block queue\n", current->id);
+		    //disableTimer();
 		    swapcontext(&(current->context), &(scheduler->context)); 
-		    printf("[D]: Mutex has been unlocked, this thread can now run!\n");
+		    //printf("[D]: Mutex %d has been unlocked, this thread %d can now run!\n", mutex->id, current->id);
         } else if (mutex->lock == '0') {
         	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
         	mutex->lock = '1'; 
@@ -541,30 +543,14 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	if (current->id == mutex->tid) {
 		//Note the problem with this for loop is that only the threads with the highest priority will run before the lower priority threads and thus obtain the lock before the lower priority threads 
 		//Maybe we should just do first come, first serve for mutexes, I'm not entirely sure if pthread does this but in the book, they do this.
-		/**
-		int maxthreads = blockedQueue->size; 
-		QueueNode* currentBlock = blockedQueue->head;
-		for (int index = 0; index < maxthreads; index++) { 
-			tcb* currentThread = dequeue(blockedQueue);
-			//Means this thread requires this mutex, and now the mutex is free, can be removed from the block list and placed on the readyQueue
-			if (currentThread->desiredMutex == mutex->id) {
-				currentThread->status = READY; 
-				enqueue(readyQueue, currentThread);
-			} else {
-				enqueue(blockedQueue, currentThread);
-			}
-		}
-		mutex->lock = '0';
-		mutex->tid = -1;
-		current->desiredMutex = -1; // If the current->desiredMutex = mutex->id instruction on line 261 is removed, remove this line too.
-		*/
 		tcb* unblockedThread = findFirstOfBlockedQueue(blockedQueue, mutex->id);
 		if(unblockedThread != NULL) {
-			printf("[D]: Succesfully found a thread that is waiting on this mutex, adding the thread to the ready queue\n");
+			//printf("[D]: Succesfully found a thread %d that is waiting on this mutex %d, adding the thread to the ready queue\n", unblockedThread->id, mutex->id);
 			unblockedThread->status = READY;
 			unblockedThread->desiredMutex = -1;
 			enqueue(readyQueue, unblockedThread);
 			mutex->tid = unblockedThread->id;
+			// Notice, we do no unlock the mutex because it is still being used now but by a new thread!
 		} else {
 			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
 			mutex->lock = '0';
@@ -621,8 +607,8 @@ static void schedule() {
 
 	// YOUR CODE HERE
 	//printf("[D]: Entered Scheduler\n");
-	if(flag) {
-		flag = 0;
+	if(current != NULL && (current->status == WAITING || current->status == BLOCKED)) { 
+		// Basically check if the current Thread is now blocked (meaning it is waiting on a mutex) or if it is WAITING (meaning it's waiting on a exit thread), then it should not run again.
 		current = NULL;
 	}
 	// schedule policy
@@ -668,17 +654,9 @@ static void sched_mlfq() {
 	// YOUR CODE HERE
 	
 	
-	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
+	
 	printf("[D]: Entered Scheduler\n");
 	scheduleInfo->timeSlices++;
-	int readyQueueSize = readyQueue->size;
-	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
-		tcb* readyTCB = dequeue(readyQueue);
-		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
-			readyTCB->priority += 1;
-		}
-		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
-	}
 	
 	// Boosting the priority every X time slices, should probably change to a timer 
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
@@ -691,8 +669,32 @@ static void sched_mlfq() {
 				readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			}
 		}
-		scheduleInfo->timeSlices = 0;
 	}
+	
+	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
+	/**
+	OLD CODE FOR ENQUEUING READY THREAD
+	int readyQueueSize = readyQueue->size;
+	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
+		tcb* readyTCB = dequeue(readyQueue);
+		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
+			readyTCB->priority += 1;
+		}
+		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+	}
+	*/
+	tcb* readyTCB = dequeue(readyQueue);
+	while(readyTCB != NULL) {
+		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
+			readyTCB->priority += 1;
+		}
+		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+		readyTCB = dequeue(readyQueue);
+	}
+	
+	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
+		scheduleInfo->timeSlices = 0;
+	} 
 	
 	//If the current thread used the whole time slice, decrease its priority.
 	if(scheduleInfo->usedEntireTimeSlice == '1') {
@@ -700,7 +702,8 @@ static void sched_mlfq() {
 			current->priority -= 1;
 		}
 		scheduleInfo->usedEntireTimeSlice = '0';
-	} 
+	}
+	 
 	//Find the next thread to run by searching through the highest priority queue. 
 	for (int priorityQueueLevel = MAX_PRIORITY - 1; priorityQueueLevel >= 0; priorityQueueLevel--) { 
 		tcb* nextRun = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
