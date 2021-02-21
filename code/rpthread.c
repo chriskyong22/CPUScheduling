@@ -392,7 +392,7 @@ void rpthread_exit(void *value_ptr) {
 	disableTimer();
 	printf("Entered PThread Exit\n");
 	if (value_ptr != NULL) {
-		current->exitValue = value_ptr; //Need to set to return value but how?
+		current->exitValue = value_ptr;
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
 	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
@@ -657,7 +657,7 @@ static void sched_mlfq() {
 	
 	// Boosting the priority every X time slices, should probably change to a timer 
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
-		printf("[D]: Boosting priorities!\n");
+		//printf("[D]: Boosting priorities!\n");
 		for(int priorityQueueLevel = 0; priorityQueueLevel < MAX_PRIORITY - 1; priorityQueueLevel++) {
 			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			while(readyTCB != NULL){
