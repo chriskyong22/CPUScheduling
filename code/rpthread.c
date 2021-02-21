@@ -652,10 +652,7 @@ static void sched_mlfq() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
-	
-	
-	
-	printf("[D]: Entered Scheduler\n");
+	//printf("[D]: Entered Scheduler\n");
 	scheduleInfo->timeSlices++;
 	
 	// Boosting the priority every X time slices, should probably change to a timer 
