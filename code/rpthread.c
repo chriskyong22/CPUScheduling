@@ -342,12 +342,17 @@ void startTimer() { //Should it just call initialize timer instead?
 
 void pauseTimer() {
 	setitimer(ITIMER_PROF, &zero, &timer);
-	printf("[D]: Time Paused, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
+	//printf("[D]: Time Paused, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	//printf("[D]: The timer has been paused!\n");
 }
 
 void resumeTimer() { 
-	printf("[D]: Time resuming, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
+	//printf("[D]: Time resuming, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
+
+	//How long the timer should run before outputting a SIGPROF signal. 
+	// (The timer will count down from this value and once it hits 0, output a signal and reset to the IT_INTERVAL value)
+	timer.it_value.tv_sec = (((TIMESLICE * 1000) / 1000000) == 0) ? 0 : ((TIMESLICE * 1000) / 1000000) - (timer.it_value.tv_sec % ((TIMESLICE * 1000) / 1000000));
+	timer.it_value.tv_usec = (((TIMESLICE * 1000) % 1000000) == 0) ? 0 : ((TIMESLICE * 1000) % 1000000) - (timer.it_value.tv_usec % ((TIMESLICE * 1000) % 1000000));
 	setitimer(ITIMER_PROF, &timer, NULL);
 	//printf("[D]: The timer is resuming!\n");
 }
@@ -664,6 +669,7 @@ static void sched_mlfq() {
 	
 	
 	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
+	printf("[D]: Entered Scheduler\n");
 	scheduleInfo->timeSlices++;
 	int readyQueueSize = readyQueue->size;
 	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
