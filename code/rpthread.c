@@ -476,10 +476,8 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
                           const pthread_mutexattr_t *mutexattr) {
 	//initialize data structures for this mutex
 	// YOUR CODE HERE
-	pauseTimer();
 	printf("Entered Mutex Init\n");
 	if(mutex == NULL){
-		resumeTimer();
 		return -1;
 	}
 	
@@ -489,7 +487,6 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	mutex->lock = 0;
 	mutex->waitingThreadID = -1;
 	
-	resumeTimer();
 	return 0;
 };
 
