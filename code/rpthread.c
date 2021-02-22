@@ -20,7 +20,6 @@ Queue* joinQueue = NULL;
 schedulerNode* scheduleInfo = NULL;
 tcb* scheduler = NULL; 
 tcb* current = NULL;
-int flag = 1;
 struct itimerval timer = {0};
 struct itimerval zero = {0};
 struct sigaction signalHandler = {0};
@@ -487,7 +486,7 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
 	mutex->id = mutexID++;
 	mutex->tid = -1; 
-	mutex->lock = '0';
+	mutex->lock = 0;
 	mutex->waitingThreadID = -1;
 	
 	resumeTimer();
@@ -513,7 +512,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
        		return -1;
        	}
        	
-        while(mutex->lock == '1') {
+        while(__sync_lock_test_and_set(&(mutex->lock), 1)) {
         	printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
@@ -531,7 +530,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         	}
         } 
     	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
-    	mutex->lock = '1'; 
+    	// mutex->lock = 1; 
     	mutex->tid = current->id;
     	resumeTimer();
         
@@ -550,7 +549,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	
 	// Checking if the thread has the mutex so other threads cannot just unlock 
 	// mutexes they do not have or if the mutex is unlocked already
-	if (mutex == NULL || mutex->tid != current->id || mutex->lock == '0') {
+	if (mutex == NULL || mutex->tid != current->id || mutex->lock == 0) {
 		resumeTimer(); 
 		return -1;
 	}
@@ -569,7 +568,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
 		}
 	} 
-	mutex->lock = '0';
+	__sync_lock_release(&(mutex->lock));
 	mutex->tid = -1;
 	//printf("[D]: Mutex is now unlocked.\n");
 	resumeTimer();
@@ -588,8 +587,8 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	}
 	// Should we be able to free mutexes that are in use or required/wanted by threads?
 	int threadWaiting = checkExistBlockedQueue(blockedQueue, mutex->id);
-	char isLocked = mutex->lock;
-	if(threadWaiting == 1 || isLocked == '1' || mutex->waitingThreadID != -1) {
+	volatile int isLocked = mutex->lock;
+	if(threadWaiting == 1 || isLocked == 1 || mutex->waitingThreadID != -1) {
 		//A thread is waiting or using this mutex, what to do? Currently going to just return -1 or error. 
 		resumeTimer();
 		return -1;
