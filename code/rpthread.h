@@ -64,7 +64,7 @@ typedef struct rpthread_mutex_t {
 	
 	uint id; //ID of the mutex
 	int tid; //Change to rp_thread_t later when I figure out if scheduling thread will always be 0 (if so, we can initially set it to 0 since all other threads IDs > 0)
-	volatile int lock; //Using char to save memory atm 
+	volatile int lock; 
 	int waitingThreadID;
 } rpthread_mutex_t;
 
