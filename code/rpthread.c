@@ -403,7 +403,7 @@ int rpthread_yield() {
 	// YOUR CODE HERE
 	// Scheduler will change the status to READY 
 	disableTimer();
-	printf("Entered PThread Yield\n");
+	//printf("Entered PThread Yield\n");
 	swapcontext(&(current->context), &(scheduler->context));
 
 	return 0;
@@ -515,15 +515,24 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         
         //Where to find the built-in test and set atomic function
         // So I'm just going to use chars as the lock even though this is not really test_and_set but w/e
-        //pauseTimer();
         //printf("Entered Mutex Lock\n");
        	if(mutex == NULL){
-       		//resumeTimer();
        		return -1;
        	}
        	
+       	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+			rpthread_yield();
+			// YIELD instead of SPINWAIT until this thread can access the 
+			// blockQueue mutex since only one thread should modify the block 
+			// queue at a time for thread safe and we do not want to waste run
+			// time so we yield.
+		}
+       	
         while(__sync_lock_test_and_set(&(mutex->lock), 1)) {
-        	disableTimer();
+        	disableTimer(); // Since we cannot guarantee the disableTimer executes
+        					// after the lock instruction, then we have to wrap 
+        					// this in the blockedQueueMutex. (We want this the 
+        					// WHOLE for loop to execute atomically.) 
         	printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
@@ -532,19 +541,25 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    enqueue(blockedQueue, current); 
 		    
 		    //printf("[D]: Succesfully added current thread %d to the block queue\n", current->id);
+		    __sync_lock_release(&(blockedQueueMutex)); 
 		    swapcontext(&(current->context), &(scheduler->context)); // The blocked thread will return here and thus we will have to check if the mutex is still locked or not.
-		    //pauseTimer();
-		    printf("[D]: Mutex %d has been unlocked, this thread %d can now run!\n", mutex->id, current->id);
-		   	if (mutex->waitingThreadID == current->id) {
-        		mutex->waitingThreadID = -1;
-        	} else {
+        	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+				rpthread_yield();
+				// YIELD instead of SPINWAIT until this thread can access the 
+				// blockQueue mutex since only one thread should modify the block 
+				// queue at a time for thread safe and we do not want to waste run
+				// time so we yield.
+			}
+			printf("[D]: Resuming thread %d, Mutex %d was unlocked and now can maybe be obtained!\n", current->id, mutex->id);
+		   	if (mutex->waitingThreadID != current->id) {
         		printf("[D]: ERROR in waitingThreadID %d, should always be the current->id or this thread %d\n", mutex->waitingThreadID, current->id);
         	}
+			mutex->waitingThreadID = -1;
         } 
     	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
     	// mutex->lock = 1; 
     	mutex->tid = current->id;
-    	//resumeTimer();
+    	__sync_lock_release(&(blockedQueueMutex)); 
         
         return 0;
 };
@@ -556,13 +571,11 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	// so that they could compete for mutex later.
 		
 	// YOUR CODE HERE
-	//pauseTimer();
 	//printf("Entered Mutex Unlock\n");
 	
 	// Checking if the thread has the mutex so other threads cannot just unlock 
 	// mutexes they do not have or if the mutex is unlocked already
 	if (mutex == NULL || mutex->tid != current->id || mutex->lock == 0) {
-		//resumeTimer(); 
 		return -1;
 	}
 	
@@ -570,8 +583,11 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	__sync_lock_release(&(mutex->lock));
 	
 	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
-		// spinlock until this thread can access the blockQueue mutex since 
-		// only one thread should modify the block queue at a time for thread safe
+		rpthread_yield();
+		// YIELD instead of SPINWAIT until this thread can access the 
+		// blockQueue mutex since only one thread should modify the block 
+		// queue at a time for thread safe and we do not want to waste run
+		// time so we yield.
 	}
 	//If we do not have a thread in the readyQueue, already waiting for this mutex, find and add one. 
 	if (mutex->waitingThreadID == -1) {
@@ -590,7 +606,6 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	__sync_lock_release(&(blockedQueueMutex)); 
 	
 	//printf("[D]: Mutex is now unlocked.\n");
-	//resumeTimer();
 	return 0;
 };
 
