@@ -17,13 +17,14 @@ Queue* readyQueue = NULL;
 Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
-schedulerNode* scheduleInfo = NULL;
-tcb* scheduler = NULL; 
+schedulerNode* scheduleInfo = NULL; 
+tcb* scheduler = NULL; //Can change this to be the scheduler context only instead of allocating all the space for a TCB struct.
 tcb* current = NULL;
 volatile int blockedQueueMutex = 0;
 struct itimerval timer = {0};
 struct itimerval zero = {0};
 struct sigaction signalHandler = {0};
+
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -49,8 +50,13 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		// Because mainContext is obtained from getContext(), it will resume at the 
 		// getContext call (see getContext(2) man page) which is initializeTCB() 
 		// therefore it will realloc the stack and everything but we do not want 
-		// that so we have to recall getcontext in here.
-		//If we were able to use makeContext(), then when we return to the thread, it would run the function specified in the makeContext() which is why the other threads are fine except Main thread.
+		// that so we have to recall getcontext in here. Obviously if the mainTCB
+		// gets swapped via swapcontext, then we do not have to worry about 
+		// it coming back here. This is used for safety! Probably can remove.
+		
+		// If we were able to use makeContext(), then when we return to the thread,
+		// it would run the function specified in the makeContext() which is why
+		// the other threads are fine except Main thread.
 		if(getcontext(&mainTCB->context) == -1) {
 			perror("[D]: Failed to initialize the context of the mainTCB.\n");
 			return -1;
@@ -64,8 +70,8 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 				am mallocing it so if the user decides to pthread_exit the main
 				context, we don't run into a free issue where it tries to free
 				the context stack (I am not entirely sure what happens if you 
-				try to free the main context or if it is malloced or yet) so I
-				will be mallocing the main context stack. Note this will not 
+				try to free the main context or if the main context is malloced) 
+				so I will be mallocing the main context stack. Note this will not 
 				affect the outcome because the main context should swapcontext
 				to exit out and thus will save the current context and therefore
 				the behavior should be the same. 
@@ -95,6 +101,10 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	return 0;
 };
 
+/*
+	Mallocs and initializes only the headers of the TCB struct but not the
+	context. 
+*/
 tcb* initializeTCBHeaders() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
 	if(threadControlBlock == NULL) {
@@ -111,6 +121,10 @@ tcb* initializeTCBHeaders() {
 	threadControlBlock->exitValue = NULL;
 	return threadControlBlock;
 }
+
+/**
+	Mallocs and initializes the TCB struct, including the context.
+*/
 
 tcb* initializeTCB() {
 	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
@@ -147,7 +161,14 @@ tcb* initializeTCB() {
 	
 	return threadControlBlock;
 }
-
+/**
+	Mallocs and initializes all the queues required for the scheduling.
+	Ready queue indicates which threads are ready to be scheduled.
+	Join queue indicates which threads are waiting for another thread to 
+	terminate.
+	Blocked queue indicates which threads are waiting for mutex.
+	Exit queue indicates which threads have exited but not been joined yet.
+*/
 void initializeScheduleQueues() {
 	readyQueue = initializeQueue();
 	joinQueue = initializeQueue();
@@ -155,6 +176,9 @@ void initializeScheduleQueues() {
 	exitQueue = initializeQueue();
 }
 
+/**
+	Mallocs and initializes the global scheduler struct.
+*/
 void initializeScheduler() {
 	scheduleInfo = malloc(sizeof(schedulerNode) * 1);
 	if(scheduleInfo == NULL) {
@@ -173,6 +197,10 @@ void initializeScheduler() {
 	scheduleInfo->timeSlices = 0; 
 }
 
+/**
+	Registers the SIGPROF signal to be handled with the timer_interrupt_handler
+	function. 
+*/
 void initializeSignalHandler() {
 	signalHandler.sa_handler = &timer_interrupt_handler;
 	if(sigaction(SIGPROF, &signalHandler, NULL) == -1) {
@@ -181,6 +209,13 @@ void initializeSignalHandler() {
 	}
 }
 
+
+/*
+	Starts the timer with no interval, just sets it to the time slice because
+	once the timer runs out and sends the signal (SIGPROF), the timer interrupt
+	handler automatically swaps to the scheduler context and the schedule 
+	context automatically restarts the timer. 
+*/
 void initializeTimer() {
 	//The initial and reset values of the timer. 
 	//timer.it_interval.tv_sec = (TIMESLICE * 1000) / 1000000;
@@ -194,7 +229,11 @@ void initializeTimer() {
 	
 	setitimer(ITIMER_PROF, &timer, NULL);
 }
- 
+
+/**
+	Allocates memory for the queue struct and sets the default values, 
+	returns the pointer to the malloced queue. 
+*/
 Queue* initializeQueue() {
 	Queue* queue = malloc(sizeof(Queue) * 1); 
 	if(queue == NULL) {
@@ -329,7 +368,6 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 		return -1;
 	}
 	QueueNode* currentNode = queue->head;
-	// Will traverse through all the node
 	while(currentNode != NULL) {
 		if(currentNode->node->desiredMutex == mutexID) {
 			return 1;
@@ -344,7 +382,6 @@ void timer_interrupt_handler(int signum) {
 	char debug[] = "Timer Interrupt Happened\n";
 	//write(1, &debug, sizeof(debug));
 	if (signum == SIGPROF) {
-		//printf("[D]: Timer interrupt happened! Saving the current context and changing to the scheduler content! Also disabling the current timer so no interrupts in the scheduling thread.\n");
 		scheduleInfo->usedEntireTimeSlice = '1';
 		swapcontext(&(current->context), &(scheduler->context));
 	} else {
@@ -401,7 +438,7 @@ int rpthread_yield() {
 	// switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	// Scheduler will change the status to READY 
+
 	disableTimer();
 	//printf("Entered PThread Yield\n");
 	swapcontext(&(current->context), &(scheduler->context));
@@ -421,8 +458,7 @@ void rpthread_exit(void *value_ptr) {
 	} //If the return value is not set, can we assume we can completely just free this thread and no other thread will try to join on this thread?
 	
 	//Currently there's a 1:1 relationship between exit and join, every exit thread must have a thread that joins on it...is this correct?
-	// Can we free this or do we still need this for a copy of the exitValue?
-	free(current->context.uc_stack.ss_sp);
+	free(current->context.uc_stack.ss_sp); // I am not entirely sure if we can free the stack but I'm assuming yes, if we're exiting the thread.
 	current->context.uc_stack.ss_sp = NULL;
 	current->context.uc_stack.ss_size = 0;
 	printf("[D]: Attempting to find a thread that is waiting on this thread %d\n", current->id);
@@ -455,7 +491,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	printf("Entered PThread Join\n");
 	//According to how PTHREAD works, threads cannot join on the same thread meaning once a thread is joined on, the joined thread's pthread struct should be freed and before that should return the retval to the thread that is doing the joinning  
 	//Join threads are taken off the run queue because it wastes run time and should only resume when if the thread exits right? Therefore Two cases: Thread Exits then another thread attempts to join or threads attempts to join then thread exits? Therefore we have to check the exit queue in here to see if the thread has already exit and check in the exit, if there is a thread waiting to join on it?
-	// What happens if a thread attempts to join but the thread does not exist or already exitted, should it just be stuck forever on the join queue?
+	// What happens if a thread attempts to join but the thread does not exist or already exited, should it just be stuck forever on the join queue?
 	//printf("[D]: Finding exit thread\n");
 	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
 	//printf("[D]: Found exit thread\n");
@@ -692,6 +728,7 @@ static void sched_rr() {
 	
 	tcb* nextRun = dequeue(readyQueue);
 	if(nextRun != NULL){
+		//printf("[D]: The next thread to run is thread %d\n", nextRun->id);
 		if(current != NULL){
 			enqueue(readyQueue, current);
 		}
