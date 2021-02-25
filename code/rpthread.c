@@ -181,13 +181,13 @@ void initializeScheduleQueues() {
 */
 void initializeScheduler() {
 	scheduleInfo = malloc(sizeof(schedulerNode) * 1);
-	if(scheduleInfo == NULL) {
+	if (scheduleInfo == NULL) {
 		perror("[D]: Failed to allocate space for the schedule Info\n");
 		exit(-1);
 	}
 	scheduleInfo->numberOfQueues = MAX_PRIORITY;
 	scheduleInfo->priorityQueues = calloc(MAX_PRIORITY, sizeof(Queue)); // Hoping this zeros out all the queues, if not have to traverse each and memset to '0'
-	if(scheduleInfo->priorityQueues == NULL) {
+	if (scheduleInfo->priorityQueues == NULL) {
 		perror("[D]: Failed to allocate space for the priority queues\n");
 		exit(-1);
 	}
@@ -266,6 +266,7 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
    	}
    	queue->size++;
 }
+
 
 tcb* dequeue(Queue* queue) {
 	if(queue == NULL || queue->head == NULL) {
@@ -494,7 +495,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// What happens if a thread attempts to join but the thread does not exist or already exited, should it just be stuck forever on the join queue?
 	//printf("[D]: Finding exit thread\n");
 	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
-	//printf("[D]: Found exit thread\n");
+	//printf("[D]: Found exit thread\n"); 
 	if(exitThread == NULL) {
 		printf("[D]: Exit thread %d does not exist currently.\n", thread);
 		current->status = WAITING;
@@ -552,11 +553,11 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         //Where to find the built-in test and set atomic function
         // So I'm just going to use chars as the lock even though this is not really test_and_set but w/e
         //printf("Entered Mutex Lock\n");
-       	if(mutex == NULL){
+       	if (mutex == NULL) {
        		return -1;
        	}
        	
-       	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+       	while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
 			rpthread_yield();
 			// YIELD instead of SPINWAIT until this thread can access the 
 			// blockQueue mutex since only one thread should modify the block 
@@ -564,12 +565,14 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 			// time so we yield.
 		}
        	
-        while(__sync_lock_test_and_set(&(mutex->lock), 1)) {
+        while (__sync_lock_test_and_set(&(mutex->lock), 1)) {
+        	
         	disableTimer(); // Since we cannot guarantee the disableTimer executes
         					// after the lock instruction, then we have to wrap 
         					// this in the blockedQueueMutex. (We want this the 
         					// WHOLE for loop to execute atomically.) 
-        	printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
+        	
+        	//printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
 		    current->status = BLOCKED;
 		    current->desiredMutex = mutex->id;
 
@@ -577,7 +580,9 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    enqueue(blockedQueue, current); 
 		    
 		    //printf("[D]: Succesfully added current thread %d to the block queue\n", current->id);
+		    
 		    __sync_lock_release(&(blockedQueueMutex)); 
+		    
 		    swapcontext(&(current->context), &(scheduler->context)); // The blocked thread will return here and thus we will have to check if the mutex is still locked or not.
         	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
 				rpthread_yield();
@@ -586,14 +591,15 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 				// queue at a time for thread safe and we do not want to waste run
 				// time so we yield.
 			}
-			printf("[D]: Resuming thread %d, Mutex %d was unlocked and now can maybe be obtained!\n", current->id, mutex->id);
+			//printf("[D]: Resuming thread %d, Mutex %d was unlocked and now can maybe be obtained!\n", current->id, mutex->id);
+			
 		   	if (mutex->waitingThreadID != current->id) {
         		printf("[D]: ERROR in waitingThreadID %d, should always be the current->id or this thread %d\n", mutex->waitingThreadID, current->id);
         	}
 			mutex->waitingThreadID = -1;
+			
         } 
     	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
-    	// mutex->lock = 1; 
     	mutex->tid = current->id;
     	__sync_lock_release(&(blockedQueueMutex)); 
         
@@ -612,11 +618,11 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	// Checking if the thread has the mutex so other threads cannot just unlock 
 	// mutexes they do not have or if the mutex is unlocked already
 	if (mutex == NULL || mutex->tid != current->id || mutex->lock == 0) {
+		printf("[D]: Entered a bad place\n");
 		return -1;
 	}
 	
-	mutex->tid = -1;
-	__sync_lock_release(&(mutex->lock));
+
 	
 	while(__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
 		rpthread_yield();
@@ -625,12 +631,16 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		// queue at a time for thread safe and we do not want to waste run
 		// time so we yield.
 	}
+	
+	mutex->tid = -1;
+	__sync_lock_release(&(mutex->lock));
+	
 	//If we do not have a thread in the readyQueue, already waiting for this mutex, find and add one. 
 	if (mutex->waitingThreadID == -1) {
 		// First come, first serve implementation of a mutex.
 		tcb* unblockedThread = findFirstOfBlockedQueue(blockedQueue, mutex->id);
 		if (unblockedThread != NULL) {
-			printf("[D]: Succesfully found a thread %d that is waiting on this mutex %d which is locked by thread %d, adding the thread to the ready queue\n", unblockedThread->id, mutex->id, current->id);
+			//printf("[D]: Succesfully found a thread %d that is waiting on this mutex %d which is locked by thread %d, adding the thread to the ready queue\n", unblockedThread->id, mutex->id, current->id);
 			unblockedThread->status = READY;
 			unblockedThread->desiredMutex = -1;
 			enqueue(readyQueue, unblockedThread);
@@ -639,6 +649,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
 		}
 	}
+	
 	__sync_lock_release(&(blockedQueueMutex)); 
 	
 	//printf("[D]: Mutex is now unlocked.\n");
@@ -712,6 +723,8 @@ static void schedule() {
 	
 	startTimer();
 	setcontext(&(current->context));
+	
+	//free(scheduleInformation);
 }
 
 /* Round Robin (RR) scheduling algorithm */
