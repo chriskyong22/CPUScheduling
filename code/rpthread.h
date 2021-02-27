@@ -46,13 +46,13 @@ typedef struct threadControlBlock {
 
 	// YOUR CODE HERE
 	rpthread_t id;
-	int joinTID; //The threadID of which thread THIS thread is waiting on to join with
+	rpthread_t joinTID; //The threadID of which thread THIS thread is waiting on to join with
 	int priority;
 	int status;
-	double runtime; 
-	int desiredMutex; // the Mutex it is waiting on/or have 
+	//double runtime; 
+	uint desiredMutex; // the Mutex it is waiting on/or have 
 	ucontext_t context;
-	stack_t stack;
+	//stack_t stack;
 	void* exitValue;
 } tcb; 
 
@@ -63,9 +63,9 @@ typedef struct rpthread_mutex_t {
 	// YOUR CODE HERE
 	
 	uint id; //ID of the mutex
-	int tid; //Change to rp_thread_t later when I figure out if scheduling thread will always be 0 (if so, we can initially set it to 0 since all other threads IDs > 0)
+	rpthread_t tid; //Change to rp_thread_t later when I figure out if scheduling thread will always be 0 (if so, we can initially set it to 0 since all other threads IDs > 0)
 	volatile int lock; 
-	int waitingThreadID;
+	rpthread_t waitingThreadID;
 } rpthread_mutex_t;
 
 /* define your data structures here: */
@@ -101,6 +101,7 @@ tcb* initializeTCBHeaders();
 void initializeScheduler();
 void enqueue(Queue*, tcb* threadControlBlock);
 tcb* dequeue(Queue*);
+void freeQueue(Queue* queue);
 tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
 tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
 int checkExistBlockedQueue(Queue* queue, int mutexID);
