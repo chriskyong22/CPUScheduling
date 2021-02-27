@@ -791,7 +791,7 @@ static void sched_mlfq() {
 			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			while(readyTCB != NULL){
 				readyTCB->priority += 1;
-				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority], readyTCB);
+				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
 				readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			}
 		}
