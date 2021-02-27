@@ -759,11 +759,6 @@ static void sched_rr() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
-	if(scheduleInfo->priorityQueues != NULL) {
-		free(scheduleInfo->priorityQueues);
-		scheduleInfo->priorityQueues = NULL;
-		scheduleInfo->numberOfQueues = 0;
-	}
 	
 	tcb* nextRun = dequeue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1]);
 	if(nextRun != NULL){
