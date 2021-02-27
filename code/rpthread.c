@@ -13,7 +13,6 @@
 #define BOOST_AFTER_TIME_SLICE threadID * 2
 rpthread_t threadID = 1;
 uint mutexID = 1;
-Queue* readyQueue = NULL;
 Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
@@ -106,7 +105,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	tcb* newThreadTCB = initializeTCB();
 	(*thread) = newThreadTCB->id;
 	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
-	enqueue(readyQueue, newThreadTCB);
+	enqueue(&scheduleInfo->priorityQueues[newThreadTCB->priority - 1], newThreadTCB);
 	//printf("[D]: Done creating the child thread, resuming!\n");
 	resumeTimer();
 	return 0;
@@ -181,7 +180,6 @@ tcb* initializeTCB() {
 	Exit queue indicates which threads have exited but not been joined yet.
 */
 void initializeScheduleQueues() {
-	readyQueue = initializeQueue();
 	joinQueue = initializeQueue();
 	blockedQueue = initializeQueue();
 	exitQueue = initializeQueue();
@@ -486,7 +484,7 @@ void rpthread_exit(void *value_ptr) {
 		joinThread->joinTID = 0;
 		joinThread->exitValue = current->exitValue;
 		//printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
-		enqueue(readyQueue, joinThread);
+		enqueue(&scheduleInfo->priorityQueues[joinThread->priority - 1], joinThread);
 		//printf("[D]: Freeing exit thread %d, no longer required?\n", current->id);
 		free(current);
 	} else {
@@ -652,7 +650,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		// time so we yield.
 	}
 
-	//If we do not have a thread in the readyQueue, already waiting for this mutex, find and add one. 
+	//If we do not have a thread in the readyQueues, already waiting for this mutex, find and add one. 
 	if (mutex->waitingThreadID == 0) {
 		// First come, first serve implementation of a mutex.
 		tcb* unblockedThread = findFirstOfBlockedQueue(blockedQueue, mutex->id);
@@ -660,7 +658,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 			//printf("[D]: Succesfully found a thread %d that is waiting on this mutex %d which is locked by thread %d, adding the thread to the ready queue\n", unblockedThread->id, mutex->id, current->id);
 			unblockedThread->status = READY;
 			unblockedThread->desiredMutex = 0;
-			enqueue(readyQueue, unblockedThread);
+			enqueue(&scheduleInfo->priorityQueues[unblockedThread->priority - 1], unblockedThread);
 			mutex->waitingThreadID = unblockedThread->id; // The reason for this, is so that we can only have one THREAD (FIRST COME FIRST SERVE) where if the mutex is unlocked, can MAYBE obtain the mutex however if the current thread still needs the mutex and has time slice remaining, allow it to potentially lock the mutex again.
 		} else {
 			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
@@ -767,11 +765,11 @@ static void sched_rr() {
 		scheduleInfo->numberOfQueues = 0;
 	}
 	
-	tcb* nextRun = dequeue(readyQueue);
+	tcb* nextRun = dequeue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1]);
 	if(nextRun != NULL){
 		//printf("[D]: The next thread to run is thread %d\n", nextRun->id);
 		if(current != NULL){
-			enqueue(readyQueue, current);
+			enqueue(&scheduleInfo->priorityQueues[current->priority - 1], current);
 		}
 		current = nextRun;
 	} 
@@ -789,40 +787,16 @@ static void sched_mlfq() {
 	// Boosting the priority every X time slices, should probably change to a timer 
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
 		//printf("[D]: Boosting priorities!\n");
-		for(int priorityQueueLevel = 0; priorityQueueLevel < MAX_PRIORITY - 1; priorityQueueLevel++) {
+		for(int priorityQueueLevel = MAX_PRIORITY - 2; priorityQueueLevel >= 0; priorityQueueLevel--) {
 			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			while(readyTCB != NULL){
 				readyTCB->priority += 1;
-				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
+				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority], readyTCB);
 				readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			}
 		}
-	}
-	
-	//Enqueue the READY threads into the priority queues (Also boost if time to boost)
-	/**
-	OLD CODE FOR ENQUEUING READY THREAD
-	int readyQueueSize = readyQueue->size;
-	for(int readyThread = 0; readyThread < readyQueueSize; ++readyThread) {
-		tcb* readyTCB = dequeue(readyQueue);
-		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
-			readyTCB->priority += 1;
-		}
-		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
-	}
-	*/
-	tcb* readyTCB = dequeue(readyQueue);
-	while(readyTCB != NULL) {
-		if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE && readyTCB->priority != MAX_PRIORITY) {
-			readyTCB->priority += 1;
-		}
-		enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
-		readyTCB = dequeue(readyQueue);
-	}
-	
-	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
 		scheduleInfo->timeSlices = 0;
-	} 
+	}
 	
 	//If the current thread used the whole time slice, decrease its priority.
 	if(scheduleInfo->usedEntireTimeSlice == '1') {
