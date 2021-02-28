@@ -114,10 +114,6 @@ void pauseTimer();
 void resumeTimer();
 void printQueue(Queue* queue);
 
-static void sched_mlfq();
-static void sched_rr();
-static void schedule();
-
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);

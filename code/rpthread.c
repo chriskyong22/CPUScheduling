@@ -24,6 +24,10 @@ struct itimerval timer = {0};
 struct itimerval zero = {0};
 struct sigaction signalHandler = {0};
 
+static void sched_mlfq();
+static void sched_rr();
+static void schedule();
+
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
