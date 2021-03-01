@@ -105,6 +105,7 @@ void freeQueue(Queue* queue);
 tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
 tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
 int checkExistBlockedQueue(Queue* queue, int mutexID);
+int checkExistQueue(Queue* queue, int threadId);
 void initializeTimer();
 void initializeSignalHandler();
 void timer_interrupt_handler(int signum);

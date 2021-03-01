@@ -16,8 +16,11 @@ uint mutexID = 1;
 Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
+Queue* terminatedAndJoinedQueue = NULL;
 schedulerNode* scheduleInfo = NULL; 
 ucontext_t scheduler = {0}; // Scheduler context
+ucontext_t exitContext = {0}; // Exit context
+ucontext_t cleanContext = {0}; // Clean-up context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 volatile int blockedQueueMutex = 0;
 volatile int threadIDMutex = 0;
@@ -29,7 +32,8 @@ struct sigaction signalHandler = {0};
 static void sched_mlfq();
 static void sched_rr();
 static void schedule();
-static void initializeContext(ucontext_t*);
+static void initializeContext(ucontext_t*, ucontext_t*);
+static void clean_up();
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -48,8 +52,14 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeScheduler();
 		initializeScheduleQueues();
 
-		initializeContext(&scheduler);
+		initializeContext(&cleanContext, NULL);
+		makecontext(&cleanContext, (void*) clean_up, 0);
+
+		initializeContext(&scheduler, &cleanContext);
 		makecontext(&scheduler, (void*) schedule, 0);
+
+		initializeContext(&exitContext, NULL);
+		makecontext(&exitContext, (void*) rpthread_exit, 1, NULL);
 
 		tcb* mainTCB = initializeTCB();
 		printf("Main thread %d\n", mainTCB->id);
@@ -121,7 +131,7 @@ tcb* initializeTCBHeaders() {
 	Initializes a thread context
 */
 
-static void initializeContext(ucontext_t* threadContext) {
+static void initializeContext(ucontext_t* threadContext, ucontext_t* uc_link) {
 	if(getcontext(threadContext) == -1){
 		perror("[D]: Failed to initialize context.\n");
 		exit(-1);
@@ -129,7 +139,7 @@ static void initializeContext(ucontext_t* threadContext) {
 	// Check to make sure that the context is actually unintialized
 	if (threadContext->uc_link == NULL) {
 		// Set uc_link to NULL only if context being initialized is the scheduler
-		threadContext->uc_link = (scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
+		threadContext->uc_link = uc_link; //(scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
 		threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 		if(threadContext->uc_stack.ss_sp == NULL) {
 			perror("[D]: Failed to allocate space for the stack in context.\n");
@@ -146,7 +156,7 @@ static void initializeContext(ucontext_t* threadContext) {
 
 tcb* initializeTCB() {
 	tcb* threadControlBlock = initializeTCBHeaders();
-	initializeContext(&(threadControlBlock->context));
+	initializeContext(&(threadControlBlock->context), &exitContext);
 	return threadControlBlock;
 }
 /**
@@ -264,11 +274,10 @@ tcb* dequeue(Queue* queue) {
 	tcb* popped = queue->head->node;
 	QueueNode* temp = queue->head;
 	queue->head = queue->head->next;
-	queue->size--;
-	if(queue->size == 0){
+	free(temp);
+	if(queue->size-- == 0){
 		queue->tail = NULL;
 	}
-	free(temp);
 	return popped;
 }
 
@@ -281,19 +290,22 @@ tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	if(currentNode->node->id == thread){
 		return dequeue(queue);
 	}
-	// Will traverse through all the node and check except the 1st node 
-	while(currentNode->next != NULL) {
-		if(currentNode->next->node->id == thread) {
-			if(currentNode->next == queue->tail) {
-				queue->tail = currentNode;
+	// Will traverse through all the node and check except the 1st node
+	QueueNode* prev = currentNode;
+	currentNode = currentNode->next;
+	while(currentNode != NULL) {
+		if(currentNode->node->id == thread) {
+			if(currentNode == queue->tail) {
+				queue->tail = prev;
 			}
-			tcb* threadControlBlock = currentNode->next->node;
-			QueueNode* temp = currentNode->next;
-			currentNode->next = currentNode->next->next;
+			tcb* threadControlBlock = currentNode->node;
+			QueueNode* temp = currentNode;
+			prev->next = currentNode->next;
 			free(temp);
 			queue->size--;
 			return threadControlBlock;
 		}
+		prev = currentNode;
 		currentNode = currentNode->next;
 	}
 	return NULL;
@@ -367,8 +379,22 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 	return -1;
 }
 
+int checkExistQueue(Queue* queue, int threadId) {
+	if(queue == NULL || queue->head == NULL) {
+		return -1;
+	}
+	QueueNode* currentNode = queue->head;
+	while(currentNode != NULL) {
+		if(currentNode->node->id == threadId) {
+			return 1;
+		}
+		currentNode = currentNode->next;
+	}
+	return -1;
+}
+
 void timer_interrupt_handler(int signum) {
-	disableTimer();
+	//disableTimer();
 	//char debug[] = "Timer Interrupt Happened\n";
 	//write(1, &debug, sizeof(debug));
 	if (signum == SIGPROF) {
@@ -464,7 +490,7 @@ void rpthread_exit(void *value_ptr) {
 		//printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
 		enqueue(&scheduleInfo->priorityQueues[joinThread->priority - 1], joinThread);
 		//printf("[D]: Freeing exit thread %d, no longer required?\n", current->id);
-		free(current);
+		enqueue(terminatedAndJoinedQueue, current);
 	} else {
 		//printf("[D]: Found no thread that is waiting on this thread %d, added to the exit queue\n", current->id);
 		enqueue(exitQueue, current);
@@ -481,16 +507,30 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	// de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
-	pauseTimer();
+	
 	//printf("Entered PThread Join\n");
 	//According to how PTHREAD works, threads cannot join on the same thread meaning once a thread is joined on, the joined thread's pthread struct should be freed and before that should return the retval to the thread that is doing the joinning  
 	//Join threads are taken off the run queue because it wastes run time and should only resume when if the thread exits right? Therefore Two cases: Thread Exits then another thread attempts to join or threads attempts to join then thread exits? Therefore we have to check the exit queue in here to see if the thread has already exit and check in the exit, if there is a thread waiting to join on it?
 	// What happens if a thread attempts to join but the thread does not exist or already exited, should it just be stuck forever on the join queue?
 	//printf("[D]: Finding exit thread\n");
+	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
+		rpthread_yield();
+	}
+	if(thread >= threadID) {
+		return -1;
+	}
+	__sync_lock_release(&(threadIDMutex)); 
+	
+	pauseTimer();
+	
 	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
 	//printf("[D]: Found exit thread\n"); 
 	if(exitThread == NULL) {
 		//printf("[D]: Exit thread %d does not exist currently.\n", thread);
+		if(checkExistQueue(terminatedAndJoinedQueue, thread) == 1) {
+			resumeTimer();
+			return -1;
+		}
 		current->status = WAITING;
 		current->joinTID = thread;
 		//printf("[D]: Current thread is waiting, going on the join queue.\n");
@@ -508,7 +548,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		if(value_ptr != NULL) {	
 			*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
 		}
-		free(exitThread);
+		enqueue(terminatedAndJoinedQueue, exitThread); 
 	}
 	resumeTimer();
 	return 0;
@@ -525,9 +565,7 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	}
 	
 	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
-    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) {
-		rpthread_yield();
-	}
+    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) rpthread_yield();
 	mutex->id = mutexID++;
 	__sync_lock_release(&(mutexIDMutex)); 
 	mutex->tid = 0; 
@@ -793,6 +831,10 @@ static void sched_mlfq() {
 			break;
 		}
 	}
+}
+
+static void clean_up() {
+	printf("In clean-up\n");
 }
 
 // Feel free to add any other functions you need
