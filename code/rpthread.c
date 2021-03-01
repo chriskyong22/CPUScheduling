@@ -18,6 +18,8 @@ Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
 schedulerNode* scheduleInfo = NULL; 
 ucontext_t scheduler = {0}; // Scheduler context
+ucontext_t exitContext = {0}; // Exit context
+ucontext_t cleanContext = {0}; // Clean-up context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 volatile int blockedQueueMutex = 0;
 volatile int threadIDMutex = 0;
@@ -29,7 +31,8 @@ struct sigaction signalHandler = {0};
 static void sched_mlfq();
 static void sched_rr();
 static void schedule();
-static void initializeContext(ucontext_t*);
+static void initializeContext(ucontext_t*, ucontext_t*);
+static void clean_up();
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -48,8 +51,14 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeScheduler();
 		initializeScheduleQueues();
 
-		initializeContext(&scheduler);
+		initializeContext(&cleanContext, NULL);
+		makecontext(&cleanContext, (void*) clean_up, 0);
+
+		initializeContext(&scheduler, &cleanContext);
 		makecontext(&scheduler, (void*) schedule, 0);
+
+		initializeContext(&exitContext, NULL);
+		makecontext(&exitContext, (void*) rpthread_exit, 1, NULL);
 
 		tcb* mainTCB = initializeTCB();
 		printf("Main thread %d\n", mainTCB->id);
@@ -121,7 +130,7 @@ tcb* initializeTCBHeaders() {
 	Initializes a thread context
 */
 
-static void initializeContext(ucontext_t* threadContext) {
+static void initializeContext(ucontext_t* threadContext, ucontext_t* uc_link) {
 	if(getcontext(threadContext) == -1){
 		perror("[D]: Failed to initialize context.\n");
 		exit(-1);
@@ -129,7 +138,7 @@ static void initializeContext(ucontext_t* threadContext) {
 	// Check to make sure that the context is actually unintialized
 	if (threadContext->uc_link == NULL) {
 		// Set uc_link to NULL only if context being initialized is the scheduler
-		threadContext->uc_link = (scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
+		threadContext->uc_link = uc_link; //(scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
 		threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
 		if(threadContext->uc_stack.ss_sp == NULL) {
 			perror("[D]: Failed to allocate space for the stack in context.\n");
@@ -146,7 +155,7 @@ static void initializeContext(ucontext_t* threadContext) {
 
 tcb* initializeTCB() {
 	tcb* threadControlBlock = initializeTCBHeaders();
-	initializeContext(&(threadControlBlock->context));
+	initializeContext(&(threadControlBlock->context), &exitContext);
 	return threadControlBlock;
 }
 /**
@@ -264,11 +273,10 @@ tcb* dequeue(Queue* queue) {
 	tcb* popped = queue->head->node;
 	QueueNode* temp = queue->head;
 	queue->head = queue->head->next;
-	queue->size--;
-	if(queue->size == 0){
+	free(temp);
+	if(queue->size-- == 0){
 		queue->tail = NULL;
 	}
-	free(temp);
 	return popped;
 }
 
@@ -281,19 +289,22 @@ tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	if(currentNode->node->id == thread){
 		return dequeue(queue);
 	}
-	// Will traverse through all the node and check except the 1st node 
-	while(currentNode->next != NULL) {
-		if(currentNode->next->node->id == thread) {
-			if(currentNode->next == queue->tail) {
-				queue->tail = currentNode;
+	// Will traverse through all the node and check except the 1st node
+	QueueNode* prev = currentNode;
+	currentNode = currentNode->next;
+	while(currentNode != NULL) {
+		if(currentNode->node->id == thread) {
+			if(currentNode == queue->tail) {
+				queue->tail = prev;
 			}
-			tcb* threadControlBlock = currentNode->next->node;
-			QueueNode* temp = currentNode->next;
-			currentNode->next = currentNode->next->next;
+			tcb* threadControlBlock = currentNode->node;
+			QueueNode* temp = currentNode;
+			prev->next = currentNode->next;
 			free(temp);
 			queue->size--;
 			return threadControlBlock;
 		}
+		prev = currentNode;
 		currentNode = currentNode->next;
 	}
 	return NULL;
@@ -525,9 +536,7 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	}
 	
 	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
-    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) {
-		rpthread_yield();
-	}
+    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) rpthread_yield();
 	mutex->id = mutexID++;
 	__sync_lock_release(&(mutexIDMutex)); 
 	mutex->tid = 0; 
@@ -793,6 +802,10 @@ static void sched_mlfq() {
 			break;
 		}
 	}
+}
+
+static void clean_up() {
+	printf("In clean-up\n");
 }
 
 // Feel free to add any other functions you need
