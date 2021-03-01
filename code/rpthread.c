@@ -517,6 +517,7 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 		rpthread_yield();
 	}
 	if(thread >= threadID) {
+		__sync_lock_release(&(threadIDMutex)); 
 		return -1;
 	}
 	__sync_lock_release(&(threadIDMutex)); 
