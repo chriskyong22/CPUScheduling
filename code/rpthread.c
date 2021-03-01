@@ -17,8 +17,8 @@ Queue* blockedQueue = NULL;
 Queue* exitQueue = NULL;
 Queue* joinQueue = NULL;
 schedulerNode* scheduleInfo = NULL; 
-ucontext_t scheduler = {0}; //Can change this to be the scheduler context only instead of allocating all the space for a TCB struct.
-tcb* current = NULL;
+ucontext_t scheduler = {0}; // Scheduler context
+tcb* current = NULL; // Current non-scheduler tcb (including context)
 volatile int blockedQueueMutex = 0;
 struct itimerval timer = {0};
 struct itimerval zero = {0};
@@ -27,6 +27,7 @@ struct sigaction signalHandler = {0};
 static void sched_mlfq();
 static void sched_rr();
 static void schedule();
+static void initializeContext(ucontext_t*);
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -43,22 +44,12 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	if(scheduler.uc_stack.ss_size == 0) {
 		printf("[D]: Initial Setup\n");
 		initializeScheduler();
-		initializeScheduleQueues();  
-		if(getcontext(&(scheduler)) == -1){
-			perror("[D]: Failed to initialize the context of the TCB.\n");
-			exit(-1);
-		};
-		scheduler.uc_link = NULL;
-		scheduler.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-		if(scheduler.uc_stack.ss_sp == NULL) {
-			perror("[D]: Failed to allocate space for the stack of the TCB.\n");
-			exit(-1);
-		}
-		scheduler.uc_stack.ss_size = THREAD_STACK_SIZE;
-		scheduler.uc_stack.ss_flags = 0; 
+		initializeScheduleQueues();
+
+		initializeContext(&scheduler);
 		makecontext(&scheduler, (void*) schedule, 0);
-		
-		tcb* mainTCB = initializeTCBHeaders();
+
+		tcb* mainTCB = initializeTCB();
 		printf("Main thread %d\n", mainTCB->id);
 		current = mainTCB;
 		// Because mainContext is obtained from getContext(), it will resume at the 
@@ -71,36 +62,19 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		// If we were able to use makeContext(), then when we return to the thread,
 		// it would run the function specified in the makeContext() which is why
 		// the other threads are fine except Main thread.
-		if(getcontext(&mainTCB->context) == -1) {
-			perror("[D]: Failed to initialize the context of the mainTCB.\n");
-			return -1;
-		}
-		if (mainTCB->context.uc_link == NULL) {
-			printf("[D]: This place should only be accessed once! If it is accessed more than once, this is an error because the main thread is now mallocing a new stack each time this thread runs.\n");
-			ucontext_t* threadContext = &(mainTCB->context); 
-			threadContext->uc_link = &(scheduler);
-			/**
-				The main context does not need to be malloced technically but I
-				am mallocing it so if the user decides to pthread_exit the main
-				context, we don't run into a free issue where it tries to free
-				the context stack (I am not entirely sure what happens if you 
-				try to free the main context or if the main context is malloced) 
-				so I will be mallocing the main context stack. Note this will not 
-				affect the outcome because the main context should swapcontext
-				to exit out and thus will save the current context and therefore
-				the behavior should be the same. 
-			*/
-			threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-			if(threadContext->uc_stack.ss_sp == NULL) {
-				perror("[D]: Failed to allocate space for the stack of the MAIN TCB.\n");
-				return -1;
-			}
-			threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
-			threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
-			//mainTCB->stack = threadContext->uc_stack;
-		} else {
-			return 0;
-		}
+
+		/**
+			The main context does not need to be malloced technically but I
+			am mallocing it so if the user decides to pthread_exit the main
+			context, we don't run into a free issue where it tries to free
+			the context stack (I am not entirely sure what happens if you 
+			try to free the main context or if the main context is malloced) 
+			so I will be mallocing the main context stack. Note this will not 
+			affect the outcome because the main context should swapcontext
+			to exit out and thus will save the current context and therefore
+			the behavior should be the same. 
+		*/
+
 		initializeSignalHandler();
 		initializeTimer();
 	}
@@ -120,7 +94,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	context. 
 */
 tcb* initializeTCBHeaders() {
-	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
+	tcb* threadControlBlock = malloc(sizeof(tcb));
 	if(threadControlBlock == NULL) {
 		perror("[D]: Failed to allocate space for the TCB.\n");
 		exit(-1);
@@ -136,43 +110,36 @@ tcb* initializeTCBHeaders() {
 	return threadControlBlock;
 }
 
+/*
+	Initializes a thread context
+*/
+
+static void initializeContext(ucontext_t* threadContext) {
+	if(getcontext(threadContext) == -1){
+		perror("[D]: Failed to initialize context.\n");
+		exit(-1);
+	}
+	// Check to make sure that the context is actually unintialized
+	if (threadContext->uc_link == NULL) {
+		// Set uc_link to NULL only if context being initialized is the scheduler
+		threadContext->uc_link = (scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
+		threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
+		if(threadContext->uc_stack.ss_sp == NULL) {
+			perror("[D]: Failed to allocate space for the stack in context.\n");
+			exit(-1);
+		}
+		threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
+		threadContext->uc_stack.ss_flags = SS_DISABLE; //Can either be SS_DISABLE or SS_ONSTACK
+	}
+}
+
 /**
 	Mallocs and initializes the TCB struct, including the context.
 */
 
 tcb* initializeTCB() {
-	tcb* threadControlBlock = malloc(sizeof(tcb) * 1);
-	if(threadControlBlock == NULL) {
-		perror("[D]: Failed to allocate space for the TCB.\n");
-		exit(-1);
-	}
-	
-	//Initializes the attributes of the TCB.
-	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range (since id is using uint while the others is using int. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
-	threadControlBlock->joinTID = 0;  
-	threadControlBlock->priority = MAX_PRIORITY;
-	threadControlBlock->status = READY;
-	//threadControlBlock->runtime = 0;
-	threadControlBlock->desiredMutex = 0;
-	threadControlBlock->exitValue = NULL;
-	
-	//Initializes the context of the TCB.
-	if(getcontext(&(threadControlBlock->context)) == -1){
-		perror("[D]: Failed to initialize the context of the TCB.\n");
-		exit(-1);
-	};
-	
-	ucontext_t* threadContext = &(threadControlBlock->context); //This is created just to make it easier to use it without having to clutter the code with &(theardControlBlock->context)
-	threadContext->uc_link = (scheduler.uc_stack.ss_size == 0) ? NULL : &(scheduler);
-	threadContext->uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
-	if(threadContext->uc_stack.ss_sp == NULL) {
-		perror("[D]: Failed to allocate space for the stack of the TCB.\n");
-		exit(-1);
-	}
-	threadContext->uc_stack.ss_size = THREAD_STACK_SIZE;
-	threadContext->uc_stack.ss_flags = 0; //Can either be SS_DISABLE or SS_ONSTACK 
-	//threadControlBlock->stack = threadContext->uc_stack;
-	
+	tcb* threadControlBlock = initializeTCBHeaders();
+	initializeContext(&(threadControlBlock->context));
 	return threadControlBlock;
 }
 /**
@@ -193,7 +160,7 @@ void initializeScheduleQueues() {
 	Mallocs and initializes the global scheduler struct.
 */
 void initializeScheduler() {
-	scheduleInfo = malloc(sizeof(schedulerNode) * 1);
+	scheduleInfo = malloc(sizeof(schedulerNode));
 	if (scheduleInfo == NULL) {
 		perror("[D]: Failed to allocate space for the schedule Info\n");
 		exit(-1);
@@ -250,7 +217,7 @@ void initializeTimer() {
 	returns the pointer to the malloced queue. 
 */
 Queue* initializeQueue() {
-	Queue* queue = malloc(sizeof(Queue) * 1); 
+	Queue* queue = malloc(sizeof(Queue)); 
 	if(queue == NULL) {
 		perror("[D]: Failed to allocate space for a queue.\n");
 		exit(-1);
@@ -266,7 +233,7 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
 	if (queue == NULL || threadControlBlock == NULL) {
 		return;
 	}
-	QueueNode* newNode = malloc(sizeof(QueueNode) * 1);
+	QueueNode* newNode = malloc(sizeof(QueueNode));
 	if(newNode == NULL) {
 		perror("[D]: Failed to allocate space for a queueNode.\n");
 		exit(-1);
@@ -787,11 +754,10 @@ static void sched_mlfq() {
 	if(scheduleInfo->timeSlices == BOOST_AFTER_TIME_SLICE) {
 		//printf("[D]: Boosting priorities!\n");
 		for(int priorityQueueLevel = MAX_PRIORITY - 2; priorityQueueLevel >= 0; priorityQueueLevel--) {
-			tcb* readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
-			while(readyTCB != NULL){
+			tcb* readyTCB;
+			while((readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel])) != NULL){
 				readyTCB->priority += 1;
 				enqueue(&scheduleInfo->priorityQueues[readyTCB->priority - 1], readyTCB);
-				readyTCB = dequeue(&scheduleInfo->priorityQueues[priorityQueueLevel]);
 			}
 		}
 		scheduleInfo->timeSlices = 0;
