@@ -20,6 +20,8 @@ schedulerNode* scheduleInfo = NULL;
 ucontext_t scheduler = {0}; //Can change this to be the scheduler context only instead of allocating all the space for a TCB struct.
 tcb* current = NULL;
 volatile int blockedQueueMutex = 0;
+volatile int threadIDMutex = 0;
+volatile int mutexIDMutex = 0;
 struct itimerval timer = {0};
 struct itimerval zero = {0};
 struct sigaction signalHandler = {0};
@@ -126,7 +128,12 @@ tcb* initializeTCBHeaders() {
 		exit(-1);
 	}
 	//Initializes the attributes of the TCB.
+	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
+		rpthread_yield();
+	}
 	threadControlBlock->id = threadID++; 
+	__sync_lock_release(&(threadIDMutex)); 
+	
 	threadControlBlock->joinTID = 0;  
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
@@ -148,8 +155,14 @@ tcb* initializeTCB() {
 	}
 	
 	//Initializes the attributes of the TCB.
-	threadControlBlock->id = threadID++; //Probably should make threadID start 1 instead of 0 because now the joinTID's range (also mutexTID is out of range) != id range (since id is using uint while the others is using int. We would treat 0 as "-1" or uninitialized because no thread should have ID 0.
-	threadControlBlock->joinTID = 0;  
+	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
+		rpthread_yield();
+	}
+	threadControlBlock->id = threadID++; 
+	__sync_lock_release(&(threadIDMutex)); 
+	
+	threadControlBlock->joinTID = 0;
+	  
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
 	//threadControlBlock->runtime = 0;
@@ -551,7 +564,11 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	}
 	
 	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
+    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) {
+		rpthread_yield();
+	}
 	mutex->id = mutexID++;
+	__sync_lock_release(&(mutexIDMutex)); 
 	mutex->tid = 0; 
 	mutex->lock = 0;
 	mutex->waitingThreadID = 0;
