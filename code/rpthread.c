@@ -20,6 +20,8 @@ schedulerNode* scheduleInfo = NULL;
 ucontext_t scheduler = {0}; // Scheduler context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 volatile int blockedQueueMutex = 0;
+volatile int threadIDMutex = 0;
+volatile int mutexIDMutex = 0;
 struct itimerval timer = {0};
 struct itimerval zero = {0};
 struct sigaction signalHandler = {0};
@@ -100,7 +102,12 @@ tcb* initializeTCBHeaders() {
 		exit(-1);
 	}
 	//Initializes the attributes of the TCB.
+	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
+		rpthread_yield();
+	}
 	threadControlBlock->id = threadID++; 
+	__sync_lock_release(&(threadIDMutex)); 
+	
 	threadControlBlock->joinTID = 0;  
 	threadControlBlock->priority = MAX_PRIORITY;
 	threadControlBlock->status = READY;
@@ -518,7 +525,11 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 	}
 	
 	//Assuming rpthread_mutex_t has already been malloced otherwise we would have to return a pointer (since we would be remallocing it)
+    while (__sync_lock_test_and_set(&(mutexIDMutex), 1)) {
+		rpthread_yield();
+	}
 	mutex->id = mutexID++;
+	__sync_lock_release(&(mutexIDMutex)); 
 	mutex->tid = 0; 
 	mutex->lock = 0;
 	mutex->waitingThreadID = 0;
