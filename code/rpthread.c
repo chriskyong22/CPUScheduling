@@ -105,7 +105,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 	Mallocs and initializes only the headers of the TCB struct but not the
 	context. 
 */
-tcb* initializeTCBHeaders() {
+static tcb* initializeTCBHeaders() {
 	tcb* threadControlBlock = malloc(sizeof(tcb));
 	if(threadControlBlock == NULL) {
 		perror("[D]: Failed to allocate space for the TCB.\n");
@@ -154,7 +154,7 @@ static void initializeContext(ucontext_t* threadContext, ucontext_t* uc_link) {
 	Mallocs and initializes the TCB struct, including the context.
 */
 
-tcb* initializeTCB() {
+static tcb* initializeTCB() {
 	tcb* threadControlBlock = initializeTCBHeaders();
 	initializeContext(&(threadControlBlock->context), &exitContext);
 	return threadControlBlock;
@@ -167,7 +167,7 @@ tcb* initializeTCB() {
 	Blocked queue indicates which threads are waiting for mutex.
 	Exit queue indicates which threads have exited but not been joined yet.
 */
-void initializeScheduleQueues() {
+static void initializeScheduleQueues() {
 	joinQueue = initializeQueue();
 	blockedQueue = initializeQueue();
 	exitQueue = initializeQueue();
@@ -176,7 +176,7 @@ void initializeScheduleQueues() {
 /**
 	Mallocs and initializes the global scheduler struct.
 */
-void initializeScheduler() {
+static void initializeScheduler() {
 	scheduleInfo = malloc(sizeof(schedulerNode));
 	if (scheduleInfo == NULL) {
 		perror("[D]: Failed to allocate space for the schedule Info\n");
@@ -198,7 +198,7 @@ void initializeScheduler() {
 	Registers the SIGPROF signal to be handled with the timer_interrupt_handler
 	function. 
 */
-void initializeSignalHandler() {
+static void initializeSignalHandler() {
 	signalHandler.sa_handler = &timer_interrupt_handler;
 	if(sigaction(SIGPROF, &signalHandler, NULL) == -1) {
 		perror("[D]: Could not initialize the timer interrupt handler!\n");
@@ -213,7 +213,7 @@ void initializeSignalHandler() {
 	handler automatically swaps to the scheduler context and the schedule 
 	context automatically restarts the timer. 
 */
-void initializeTimer() {
+static void initializeTimer() {
 	//The initial and reset values of the timer. 
 	//timer.it_interval.tv_sec = (TIMESLICE * 1000) / 1000000;
 	//timer.it_interval.tv_usec = (TIMESLICE * 1000) % 1000000;
@@ -233,7 +233,7 @@ void initializeTimer() {
 	Allocates memory for the queue struct and sets the default values, 
 	returns the pointer to the malloced queue. 
 */
-Queue* initializeQueue() {
+static Queue* initializeQueue() {
 	Queue* queue = malloc(sizeof(Queue)); 
 	if(queue == NULL) {
 		perror("[D]: Failed to allocate space for a queue.\n");
@@ -246,7 +246,7 @@ Queue* initializeQueue() {
 }
 
 // Must initialize the queue via initializeQueue() before calling this method
-void enqueue(Queue* queue, tcb* threadControlBlock) {
+static void enqueue(Queue* queue, tcb* threadControlBlock) {
 	if (queue == NULL || threadControlBlock == NULL) {
 		return;
 	}
@@ -267,7 +267,7 @@ void enqueue(Queue* queue, tcb* threadControlBlock) {
 }
 
 
-tcb* dequeue(Queue* queue) {
+static tcb* dequeue(Queue* queue) {
 	if(queue == NULL || queue->head == NULL) {
 		return NULL;
 	}
@@ -281,7 +281,7 @@ tcb* dequeue(Queue* queue) {
 	return popped;
 }
 
-tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
+static tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	if(queue == NULL || queue->head == NULL) {
 		return NULL;
 	}
@@ -311,7 +311,7 @@ tcb* findFirstOfQueue(Queue* queue, rpthread_t thread) {
 	return NULL;
 }
 
-tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
+static tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	if(queue == NULL || queue->head == NULL) {
 		return NULL;
 	}
@@ -338,7 +338,7 @@ tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread) {
 	return NULL;
 }
 
-tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID) {
+static tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID) {
 	if(queue == NULL || queue->head == NULL) {
 		return NULL;
 	}
@@ -365,7 +365,7 @@ tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID) {
 	return NULL;
 }
 
-int checkExistBlockedQueue(Queue* queue, int mutexID) {
+static int checkExistBlockedQueue(Queue* queue, int mutexID) {
 	if(queue == NULL || queue->head == NULL) {
 		return -1;
 	}
@@ -379,7 +379,7 @@ int checkExistBlockedQueue(Queue* queue, int mutexID) {
 	return -1;
 }
 
-int checkExistQueue(Queue* queue, int threadId) {
+static int checkExistQueue(Queue* queue, int threadId) {
 	if(queue == NULL || queue->head == NULL) {
 		return -1;
 	}
@@ -393,7 +393,21 @@ int checkExistQueue(Queue* queue, int threadId) {
 	return -1;
 }
 
-void timer_interrupt_handler(int signum) {
+static int checkExistJoinQueue(Queue* queue, int threadId) {
+	if(queue == NULL || queue->head == NULL) {
+		return -1;
+	}
+	QueueNode* currentNode = queue->head;
+	while(currentNode != NULL) {
+		if(currentNode->node->joinTID == threadId) {
+			return 1;
+		}
+		currentNode = currentNode->next;
+	}
+	return -1;
+}
+
+static void timer_interrupt_handler(int signum) {
 	//disableTimer();
 	//char debug[] = "Timer Interrupt Happened\n";
 	//write(1, &debug, sizeof(debug));
@@ -406,7 +420,7 @@ void timer_interrupt_handler(int signum) {
 	}
 }
 
-void disableTimer() {
+static void disableTimer() {
 	//To disable, set it_value to 0, regardless of it_interval. (According to the man pages)
 	timer.it_value.tv_sec = 0;
 	timer.it_value.tv_usec = 0;
@@ -414,7 +428,7 @@ void disableTimer() {
 	//printf("[D]: The timer has been disabled!\n");
 } 
 
-void startTimer() { //Should it just call initialize timer instead?
+static void startTimer() { //Should it just call initialize timer instead?
 	
 	timer.it_value.tv_sec = (TIMESLICE * 1000) / 1000000;
 	timer.it_value.tv_usec = (TIMESLICE * 1000) % 1000000;
@@ -423,14 +437,14 @@ void startTimer() { //Should it just call initialize timer instead?
 	setitimer(ITIMER_PROF, &timer, NULL);
 } 
 
-void pauseTimer() {
+static void pauseTimer() {
 	setitimer(ITIMER_PROF, &zero, &timer);
 	
 	//printf("[D]: Time Paused, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 	//printf("[D]: The timer has been paused!\n");
 }
 
-void resumeTimer() { 
+static void resumeTimer() { 
 	//printf("[D]: Time resuming, time left: %ld seconds, %ld microseconds\n", timer.it_value.tv_sec, timer.it_value.tv_usec);
 
 	//How long the timer should run before outputting a SIGPROF signal. 
@@ -443,7 +457,7 @@ void resumeTimer() {
 	//printf("[D]: The timer is resuming!\n");
 }
 
-void printQueue(Queue* queue) {
+static void printQueue(Queue* queue) {
 	QueueNode* currentNode = queue->head;
 	while(currentNode != NULL){
 		printf("Thread ID %d\n", currentNode->node->id);
@@ -522,13 +536,19 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	}
 	__sync_lock_release(&(threadIDMutex)); 
 	
+	if(thread == current->id || thread == 0) {
+		return 0;
+	}
+	
 	pauseTimer();
+
 	
 	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
 	//printf("[D]: Found exit thread\n"); 
 	if(exitThread == NULL) {
 		//printf("[D]: Exit thread %d does not exist currently.\n", thread);
-		if(checkExistQueue(terminatedAndJoinedQueue, thread) == 1) {
+		if(checkExistQueue(terminatedAndJoinedQueue, thread) == 1 || 
+			checkExistJoinQueue(joinQueue, thread) == 1) {
 			resumeTimer();
 			return -1;
 		}
@@ -722,7 +742,7 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	return 0;
 };
 
-void freeQueue(Queue* queue) {
+static void freeQueue(Queue* queue) {
 	QueueNode* current = queue->head;
 	while(current != NULL) {
 		QueueNode* temp = current;
@@ -768,7 +788,9 @@ static void schedule() {
 		//printf("[D]: MLFQ\n");
 		sched_mlfq();
 	#endif
-	
+	if(current == NULL) {
+		return;
+	}
 	startTimer();
 	setcontext(&(current->context));
 	//free(scheduleInformation);

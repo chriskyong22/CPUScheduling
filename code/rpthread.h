@@ -94,26 +94,27 @@ typedef struct schedulerNode {
 } schedulerNode; 
 
 /* Function Declarations: */
-Queue* initializeQueue();
-void initializeScheduleQueues();
-tcb* initializeTCB();
-tcb* initializeTCBHeaders();
-void initializeScheduler();
-void enqueue(Queue*, tcb* threadControlBlock);
-tcb* dequeue(Queue*);
-void freeQueue(Queue* queue);
-tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
-tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
-int checkExistBlockedQueue(Queue* queue, int mutexID);
-int checkExistQueue(Queue* queue, int threadId);
-void initializeTimer();
-void initializeSignalHandler();
-void timer_interrupt_handler(int signum);
-void startTimer();
-void disableTimer();
-void pauseTimer();
-void resumeTimer();
-void printQueue(Queue* queue);
+static Queue* initializeQueue();
+static void initializeScheduleQueues();
+static tcb* initializeTCB();
+static tcb* initializeTCBHeaders();
+static void initializeScheduler();
+static void enqueue(Queue*, tcb* threadControlBlock);
+static tcb* dequeue(Queue*);
+static void freeQueue(Queue* queue);
+static tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
+static tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
+static int checkExistBlockedQueue(Queue* queue, int mutexID);
+static int checkExistQueue(Queue* queue, int threadId);
+static int checkExistJoinQueue(Queue* queue, int threadId);
+static void initializeTimer();
+static void initializeSignalHandler();
+static void timer_interrupt_handler(int signum);
+static void startTimer();
+static void disableTimer();
+static void pauseTimer();
+static void resumeTimer();
+static void printQueue(Queue* queue);
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
@@ -151,6 +152,7 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex);
 #define pthread_mutex_lock rpthread_mutex_lock
 #define pthread_mutex_unlock rpthread_mutex_unlock
 #define pthread_mutex_destroy rpthread_mutex_destroy
+#define pthread_yield rpthread_yield
 #endif
 
 #endif
