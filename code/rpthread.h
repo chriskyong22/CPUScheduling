@@ -1,8 +1,8 @@
 // File:	rpthread_t.h
 
-// List all group member's name:
-// username of iLab:
-// iLab Server:
+// List all group member's name: Christopher Yong (cy287), Joshua Ross (jjr276)
+// username of iLab: 
+// iLab Server: cp.cs.rutgers.edu
 
 #ifndef RTHREAD_T_H
 #define RTHREAD_T_H
@@ -49,10 +49,8 @@ typedef struct threadControlBlock {
 	rpthread_t joinTID; //The threadID of which thread THIS thread is waiting on to join with
 	int priority;
 	int status;
-	//double runtime; 
 	uint desiredMutex; // the Mutex it is waiting on/or have 
 	ucontext_t context;
-	//stack_t stack;
 	void* exitValue;
 } tcb; 
 
@@ -63,9 +61,9 @@ typedef struct rpthread_mutex_t {
 	// YOUR CODE HERE
 	
 	uint id; //ID of the mutex
-	rpthread_t tid; //Change to rp_thread_t later when I figure out if scheduling thread will always be 0 (if so, we can initially set it to 0 since all other threads IDs > 0)
+	rpthread_t tid; // Thread ID that holds this mutex
 	volatile int lock; 
-	rpthread_t waitingThreadID;
+	rpthread_t waitingThreadID; //Thread ID that is waiting for this mutex to be unlocked
 } rpthread_mutex_t;
 
 /* define your data structures here: */
@@ -86,35 +84,11 @@ typedef struct Queue {
 typedef struct schedulerNode {
 	uint numberOfQueues; 
 	Queue* priorityQueues; 
-	//tcb* scheduler; //Do we even need a scheduler thread, why can't we just call the schedule function if the thread is exit/blocked/or waiting for a join?
-	//tcb* current; //The thread that is currently running, should be popped off the priorityQueue 
-	// Since RR and MLFQ both have Exit/Join/Blocked Queues, can it just be a global variable and not be stored in this struct?
 	char usedEntireTimeSlice;
 	uint timeSlices;
 } schedulerNode; 
 
 /* Function Declarations: */
-static Queue* initializeQueue();
-static void initializeScheduleQueues();
-static tcb* initializeTCB();
-static tcb* initializeTCBHeaders();
-static void initializeScheduler();
-static void enqueue(Queue*, tcb* threadControlBlock);
-static tcb* dequeue(Queue*);
-static void freeQueue(Queue* queue);
-static tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
-static tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
-static int checkExistBlockedQueue(Queue* queue, int mutexID);
-static int checkExistQueue(Queue* queue, int threadId);
-static int checkExistJoinQueue(Queue* queue, int threadId);
-static void initializeTimer();
-static void initializeSignalHandler();
-static void timer_interrupt_handler(int signum);
-static void startTimer();
-static void disableTimer();
-static void pauseTimer();
-static void resumeTimer();
-static void printQueue(Queue* queue);
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, void
