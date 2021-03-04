@@ -23,7 +23,6 @@ Queue* terminatedAndJoinedQueue = NULL;
 schedulerNode* scheduleInfo = NULL; 
 ucontext_t scheduler = {0}; // Scheduler context
 ucontext_t exitContext = {0}; // Exit context
-ucontext_t cleanContext = {0}; // Clean-up context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 
 volatile int blockedQueueMutex = 0;
@@ -38,7 +37,6 @@ static void sched_mlfq();
 static void sched_rr();
 static void schedule();
 static void initializeContext(ucontext_t*, ucontext_t*);
-static void clean_up();
 static Queue* initializeQueue();
 static void initializeScheduleQueues();
 static tcb* initializeTCB();
@@ -79,10 +77,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeScheduler();
 		initializeScheduleQueues();
 
-		initializeContext(&cleanContext, NULL);
-		makecontext(&cleanContext, (void*) clean_up, 0);
-
-		initializeContext(&scheduler, &cleanContext);
+		initializeContext(&scheduler, NULL);
 		makecontext(&scheduler, (void*) schedule, 0);
 
 		initializeContext(&exitContext, NULL);
@@ -853,10 +848,6 @@ static void sched_mlfq() {
 			break;
 		}
 	}
-}
-
-static void clean_up() {
-	printf("In clean-up\n");
 }
 
 // Feel free to add any other functions you need
