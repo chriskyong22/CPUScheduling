@@ -59,6 +59,15 @@ static void pauseTimer();
 static void resumeTimer();
 static void printQueue(Queue* queue);
 
+// Hashtable functions
+#define HASHTABLE_LEN 10000
+
+linkedList *hashTable[HASHTABLE_LEN];
+volatile int hashMutex = 0;
+static void hash_init();
+static int hash(int key);
+static tcb *hash_search(int key);
+static void hash_insert(tcb *toAdd);
 
 /* create a new thread */
 int rpthread_create(rpthread_t * thread, pthread_attr_t * attr, 
@@ -77,15 +86,15 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		initializeScheduler();
 		initializeScheduleQueues();
 
-		initializeContext(&scheduler, NULL);
-		makecontext(&scheduler, (void*) schedule, 0);
-
 		initializeContext(&exitContext, NULL);
 		makecontext(&exitContext, (void*) rpthread_exit, 1, NULL);
 
 		tcb* mainTCB = initializeTCB();
 		printf("Main thread %d\n", mainTCB->id);
 		current = mainTCB;
+		current->status = READY;
+		hash_init();
+		hash_insert(mainTCB);
 
 		/**
 			The main context does not need to be malloced technically but I
@@ -98,18 +107,20 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 			to exit out and thus will save the current context and therefore
 			the behavior should be the same. 
 		*/
-
 		initializeSignalHandler();
 		initializeTimer();
 	}
-	pauseTimer();
 	//printf("[D]: Creating new child thread.\n");
 	tcb* newThreadTCB = initializeTCB();
 	(*thread) = newThreadTCB->id;
 	makecontext(&(newThreadTCB->context), (void*)function, 1, arg);
 	enqueue(&scheduleInfo->priorityQueues[newThreadTCB->priority - 1], newThreadTCB);
+	hash_insert(newThreadTCB);
 	//printf("[D]: Done creating the child thread, resuming!\n");
-	resumeTimer();
+	//if (current != NULL) printf("Current id %d\n", current->id);
+	//pauseTimer();
+	//printQueue(&scheduleInfo->priorityQueues[MAX_PRIORITY-1]);
+	//resumeTimer();
 	return 0;
 };
 
@@ -123,8 +134,10 @@ static tcb* initializeTCBHeaders() {
 		perror("[D]: Failed to allocate space for the TCB.\n");
 		exit(-1);
 	}
-	//Initializes the attributes of the TCB.
+	// Initializes the attributes of the TCB.
+	// Critical Section (Set and increment thread id)
 	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
+		printf("8\n");
 		rpthread_yield();
 	}
 	threadControlBlock->id = threadID++; 
@@ -202,6 +215,10 @@ static void initializeScheduler() {
 	}
 	scheduleInfo->usedEntireTimeSlice = '0';
 	scheduleInfo->timeSlices = 0; 
+
+	// Create scheduler context
+	initializeContext(&scheduler, NULL);
+	makecontext(&scheduler, (void*) schedule, 0);
 }
 
 /**
@@ -250,11 +267,13 @@ static Queue* initializeQueue() {
 	queue->size = 0;
 	queue->head = NULL;
 	queue->tail = NULL;
+	queue->mutex = 0;
 	return queue;
 }
 
 // Must initialize the queue via initializeQueue() before calling this method
 static void enqueue(Queue* queue, tcb* threadControlBlock) {
+	//if (current != NULL) printf("THREAD %d call enqueue\n", current->id);
 	if (queue == NULL || threadControlBlock == NULL) {
 		return;
 	}
@@ -263,29 +282,41 @@ static void enqueue(Queue* queue, tcb* threadControlBlock) {
 		perror("[D]: Failed to allocate space for a queueNode.\n");
 		exit(-1);
 	}
-   	newNode->node = threadControlBlock;
-   	newNode->next = NULL;
-   	if (queue->head == NULL) {
-   		queue->head = queue->tail = newNode;
-   	} else {
-   		 queue->tail->next = newNode;
-   		 queue->tail = newNode;
-   	}
-   	queue->size++;
+	newNode->node = threadControlBlock;
+	newNode->next = NULL;
+
+	// Critical section (Adding the node and changing the size)
+	while (__sync_lock_test_and_set(&(queue->mutex), 1)) rpthread_yield();
+
+	if (queue->size++ == 0) {
+		queue->head = queue->tail = newNode;
+	} else {
+		queue->tail->next = newNode;
+		queue->tail = newNode;
+	}
+	__sync_lock_release(&(queue->mutex));
 }
 
-
 static tcb* dequeue(Queue* queue) {
-	if (queue == NULL || queue->head == NULL) {
+	//if (current != NULL) printf("THREAD %d call dequeue\n", current->id);
+	// Check to make sure queue is initialized
+	if (queue == NULL) return NULL;
+
+	// Critical section (Removing the node and changing size)
+	while (__sync_lock_test_and_set(&(queue->mutex), 1)) rpthread_yield();
+
+	if (queue->head == NULL) {
+		__sync_lock_release(&(queue->mutex));
 		return NULL;
 	}
 	tcb* popped = queue->head->node;
 	QueueNode* temp = queue->head;
 	queue->head = queue->head->next;
+	if (--(queue->size) == 0) queue->tail = NULL;
+	__sync_lock_release(&(queue->mutex));
+
+	// Free and return
 	free(temp);
-	if (queue->size-- == 0){
-		queue->tail = NULL;
-	}
 	return popped;
 }
 
@@ -419,6 +450,8 @@ static void timer_interrupt_handler(int signum) {
 	//disableTimer();
 	//char debug[] = "Timer Interrupt Happened\n";
 	//write(1, &debug, sizeof(debug));
+	//if (current != NULL) printf("Current id (TIMER) %d\n", current->id);
+
 	if (signum == SIGPROF) {
 		scheduleInfo->usedEntireTimeSlice = '1';
 		swapcontext(&(current->context), &(scheduler));
@@ -478,11 +511,9 @@ int rpthread_yield() {
 	// change thread state from Running to Ready
 	// save context of this thread to its thread control block
 	// switch from thread context to scheduler context
-
-	// YOUR CODE HERE
-
 	disableTimer();
 	//printf("Entered PThread Yield\n");
+	//if (current != NULL) printf("Current id %d\n", current->id);
 	swapcontext(&(current->context), &(scheduler));
 
 	return 0;
@@ -491,32 +522,35 @@ int rpthread_yield() {
 /* terminate a thread */
 void rpthread_exit(void *value_ptr) {
 	// Deallocated any dynamic memory created when starting this thread
-	
 	// YOUR CODE HERE
 	disableTimer();
 	//printf("Entered PThread Exit\n");
-	if (value_ptr != NULL) {
-		current->exitValue = value_ptr; 
-	} 
+	//printf("Current id %d\n", current->id);
+	//printQueue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1]);
+	current->exitValue = value_ptr;
 	
+	//printf("[D]: Attempting to find a thread that is waiting on this thread %d\n", current->id);
+	//tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
+
+	if (current->joinTID != 0) {
+		//printf("In id %d exit, trying to join %d\n", current->id, current->joinTID);
+		tcb *joinThread = hash_search(current->joinTID);
+		if (joinThread != NULL) {
+			joinThread->status = READY;
+			joinThread->exitValue = current->exitValue;
+			//printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
+			enqueue(&scheduleInfo->priorityQueues[joinThread->priority - 1], joinThread);
+			//printQueue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1]);
+		}
+	} 
+	current->status = EXITED;
+	// Free stack
+	//printf("EXITED %d\n", current->id);
 	free(current->context.uc_stack.ss_sp); 
 	current->context.uc_stack.ss_sp = NULL;
 	current->context.uc_stack.ss_size = 0;
-	//printf("[D]: Attempting to find a thread that is waiting on this thread %d\n", current->id);
-	tcb* joinThread = findFirstOfJoinQueue(joinQueue, current->id);
-	if (joinThread != NULL) {
-		joinThread->status = READY;
-		joinThread->joinTID = 0;
-		joinThread->exitValue = current->exitValue;
-		//printf("[D]: Found a thread %d that is waiting on this exiting thread %d, putting it on the ready queue\n", joinThread->id, current->id);
-		enqueue(&scheduleInfo->priorityQueues[joinThread->priority - 1], joinThread);
-		//printf("[D]: Freeing exit thread %d, no longer required?\n", current->id);
-		enqueue(terminatedAndJoinedQueue, current);
-	} else {
-		//printf("[D]: Found no thread that is waiting on this thread %d, added to the exit queue\n", current->id);
-		enqueue(exitQueue, current);
-	}
 	current = NULL;
+	// Swap to scheduler
 	setcontext(&(scheduler));
 };
 
@@ -526,55 +560,32 @@ int rpthread_join(rpthread_t thread, void **value_ptr) {
 	
 	// wait for a specific thread to terminate
 	// de-allocate any dynamic memory created by the joining thread
-  
-	// YOUR CODE HERE
-	
-	//printf("Entered PThread Join\n");
-	//printf("[D]: Finding exit thread\n");
-	if (thread == current->id || thread == 0) {
+
+	tcb *toJoin = hash_search(thread);
+
+	// Check if the thread is invalid or already being joined
+	if (thread == current->id || toJoin == NULL || toJoin->joinTID != 0) {
 		return 0;
 	}
-	
-	while (__sync_lock_test_and_set(&(threadIDMutex), 1)) {
-		rpthread_yield();
-	}
-	if (thread >= threadID) {
-		__sync_lock_release(&(threadIDMutex)); 
-		return -1;
-	}
-	__sync_lock_release(&(threadIDMutex)); 
-	
-	pauseTimer();
 
-	tcb* exitThread = findFirstOfQueue(exitQueue, thread);
-	//printf("[D]: Found exit thread\n"); 
-	if (exitThread == NULL) {
-		//printf("[D]: Exit thread %d does not exist currently.\n", thread);
-		if (checkExistJoinQueue(joinQueue, thread) == 1 || 
-		checkExistQueue(terminatedAndJoinedQueue, thread) == 1) {
-			resumeTimer();
-			return -1;
+	// Check if the thread has not already exited
+	if (toJoin->status != EXITED) {
+		disableTimer();
+		// Corner caase where swap to exit before disabling timer
+		if (toJoin->status != EXITED) {
+			toJoin->joinTID = current->id;
+			current->status = WAITING;
+			swapcontext(&(current->context), &(scheduler));
+		} else {
+			startTimer();
 		}
-		current->status = WAITING;
-		current->joinTID = thread;
-		//printf("[D]: Current thread is waiting, going on the join queue.\n");
-		enqueue(joinQueue, current);
-		//printf("[D]: Current thread %d has been added to the join queue.\n", current->id);
-		swapcontext(&(current->context), &(scheduler)); 
-		pauseTimer();
-		//printf("[D]: Resuming thread %d, was on join queue but exit thread %d has exited!\n", current->id, thread);
-		if (value_ptr != NULL) {
-			*value_ptr = current->exitValue;
-		}
-		current->exitValue = NULL;
-	} else {
-		//printf("[D]: Found exit thread %d for the current thread %d, freeing the exit thread.\n", exitThread->id, current->id);
-		if (value_ptr != NULL) {	
-			*value_ptr = exitThread->exitValue; //Apparently you can deference void** (but it will only store void*, if you attempt to store anything else it will be a complier warning)
-		}
-		enqueue(terminatedAndJoinedQueue, exitThread); 
 	}
-	resumeTimer();
+	//printf("Joining %d from %d\n", toJoin->id, current->id);
+	if (value_ptr != NULL) *value_ptr = toJoin->exitValue;
+	toJoin->status = KILLED;
+
+	// TODO: Remove from hashtable
+
 	return 0;
 };
 
@@ -601,6 +612,8 @@ int rpthread_mutex_init(rpthread_mutex_t *mutex,
 
 /* aquire the mutex lock */
 int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
+		//printf("MUTEX LOCK\n");
+		//printf("Current id %d\n", current->id);
         // use the built-in test-and-set atomic function to test the mutex
         // if the mutex is acquired successfully, enter the critical section
         // if acquiring mutex fails, push current thread into block list and //  
@@ -613,20 +626,20 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
        		return -1;
        	}
        	
-       	while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
-			rpthread_yield();
-			// YIELD instead of SPINWAIT until this thread can access the 
-			// blockQueue mutex since only one thread should modify the block 
-			// queue at a time for thread safe and we do not want to waste run
-			// time so we yield.
-		}
+       	// while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+		// 	rpthread_yield();
+		// 	// YIELD instead of SPINWAIT until this thread can access the 
+		// 	// blockQueue mutex since only one thread should modify the block 
+		// 	// queue at a time for thread safe and we do not want to waste run
+		// 	// time so we yield.
+		// }
        	
         while (__sync_lock_test_and_set(&(mutex->lock), 1)) {
         	
-        	disableTimer(); // Since we cannot guarantee the disableTimer executes
-        					// after the lock instruction, then we have to wrap 
-        					// this in the blockedQueueMutex. (We want this the 
-        					// WHOLE for loop to execute atomically.) 
+        	// disableTimer(); // Since we cannot guarantee the disableTimer executes
+        	// 				// after the lock instruction, then we have to wrap 
+        	// 				// this in the blockedQueueMutex. (We want this the 
+        	// 				// WHOLE for loop to execute atomically.) 
         	
         	//printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
 		    current->status = BLOCKED;
@@ -637,16 +650,16 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 		    
 		    //printf("[D]: Succesfully added current thread %d to the block queue\n", current->id);
 		    
-		    __sync_lock_release(&(blockedQueueMutex)); 
+		    // __sync_lock_release(&(blockedQueueMutex)); 
 		    
 		    swapcontext(&(current->context), &(scheduler)); // The blocked thread will return here and thus we will have to check if the mutex is still locked or not.
-        	while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
-				rpthread_yield();
-				// YIELD instead of SPINWAIT until this thread can access the 
-				// blockQueue mutex since only one thread should modify the block 
-				// queue at a time for thread safe and we do not want to waste run
-				// time so we yield.
-			}
+        	// while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+			// 	rpthread_yield();
+			// 	// YIELD instead of SPINWAIT until this thread can access the 
+			// 	// blockQueue mutex since only one thread should modify the block 
+			// 	// queue at a time for thread safe and we do not want to waste run
+			// 	// time so we yield.
+			// }
 			//printf("[D]: Resuming thread %d, Mutex %d was unlocked and now can maybe be obtained!\n", current->id, mutex->id);
 			/*
 		   	if (mutex->waitingThreadID != current->id) {
@@ -666,6 +679,8 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
 
 /* release the mutex lock */
 int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
+	//printf("MUTEX UNLOCK \n");
+	//printf("Current id %d\n", current->id);
 	// Release mutex and make it available again. 
 	// Put threads in block list to run queue 
 	// so that they could compete for mutex later.
@@ -684,13 +699,13 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 	mutex->tid = 0;
 	__sync_lock_release(&(mutex->lock));
 	
-	while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
-		rpthread_yield();
-		// YIELD instead of SPINWAIT until this thread can access the 
-		// blockQueue mutex since only one thread should modify the block 
-		// queue at a time for thread safe and we do not want to waste run
-		// time so we yield.
-	}
+	// while (__sync_lock_test_and_set(&(blockedQueueMutex), 1)) {
+	// 	rpthread_yield();
+	// 	// YIELD instead of SPINWAIT until this thread can access the 
+	// 	// blockQueue mutex since only one thread should modify the block 
+	// 	// queue at a time for thread safe and we do not want to waste run
+	// 	// time so we yield.
+	// }
 
 	//If we do not have a thread in the readyQueues, already waiting for this mutex, find and add one. 
 	if (mutex->waitingThreadID == 0) {
@@ -698,17 +713,17 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 		tcb* unblockedThread = findFirstOfBlockedQueue(blockedQueue, mutex->id);
 		if (unblockedThread != NULL) {
 			mutex->waitingThreadID = unblockedThread->id;// The reason for this, is so that we can only have one THREAD (FIRST COME FIRST SERVE) where if the mutex is unlocked, can MAYBE obtain the mutex however if the current thread still needs the mutex and has time slice remaining, allow it to potentially lock the mutex again.
-			__sync_lock_release(&(blockedQueueMutex)); 
+			//__sync_lock_release(&(blockedQueueMutex)); 
 			//printf("[D]: Succesfully found a thread %d that is waiting on this mutex %d which is locked by thread %d, adding the thread to the ready queue\n", unblockedThread->id, mutex->id, current->id);
 			unblockedThread->status = READY;
 			unblockedThread->desiredMutex = 0;
 			enqueue(&scheduleInfo->priorityQueues[unblockedThread->priority - 1], unblockedThread);
 		} else {
 			//printf("[D]: No thread is waiting on mutex %d\n", mutex->id);
-			__sync_lock_release(&(blockedQueueMutex));
+			//__sync_lock_release(&(blockedQueueMutex));
 		}
 	} else {
-		__sync_lock_release(&(blockedQueueMutex));
+		//__sync_lock_release(&(blockedQueueMutex));
 	}
 	
 	//printf("[D]: Mutex is now unlocked.\n");
@@ -758,6 +773,7 @@ static void freeQueue(Queue* queue) {
 
 /* scheduler */
 static void schedule() {
+	//if (current != NULL) printf("[D]: Entered Scheduler as %d\n", current->id);
 	// Every time when timer interrup happens, your thread library 
 	// should be contexted switched from thread context to this 
 	// schedule function
@@ -768,7 +784,8 @@ static void schedule() {
 	// YOUR CODE HERE
 	
 	//printf("[D]: Entered Scheduler\n");
-	
+	//if (current != NULL) printf("Current id %d\n", current->id);
+
 	//NOTE the timer should be disabled or paused before entering this function.
 	if (current != NULL && (current->status == WAITING || current->status == BLOCKED)) { 
 		// Basically check if the current Thread is now blocked (meaning it is waiting on a mutex)
@@ -799,9 +816,11 @@ static void sched_rr() {
 	
 	tcb* nextRun = dequeue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1]);
 	if (nextRun != NULL) {
+		//printf("Dequed %d from NULL\n", nextRun->id);
 		//printf("[D]: The next thread to run is thread %d\n", nextRun->id);
 		if (current != NULL) {
-			enqueue(&scheduleInfo->priorityQueues[current->priority - 1], current);
+			//printf("Dequed %d from thread %d\n", nextRun->id, current->id);
+			enqueue(&scheduleInfo->priorityQueues[MAX_PRIORITY - 1], current);
 		}
 		current = nextRun;
 	}
@@ -854,3 +873,42 @@ static void sched_mlfq() {
 
 // YOUR CODE HERE
 
+static void hash_init() {
+	for (int i = 0; i < HASHTABLE_LEN; i++) {
+		hashTable[i] = (linkedList *) malloc(sizeof(linkedList));
+		hashTable[i]->head = NULL;
+		hashTable[i]->mutex = 0;
+	}
+}
+
+static int hash(int key) {
+	return (key - 1) % HASHTABLE_LEN;
+}
+
+static tcb *hash_search(int threadID) {
+	int hashKey = hash(threadID);
+	linkedList *hashList = hashTable[hashKey];
+
+	while (__sync_lock_test_and_set(&(hashList->mutex), 1)) rpthread_yield();
+	for (QueueNode *curr = hashList->head; curr != NULL; curr = curr->next) {
+		if (curr->node->id == threadID) {
+			__sync_lock_release(&(hashList->mutex));
+			return curr->node;
+		}
+	}
+	__sync_lock_release(&(hashList->mutex));
+	return NULL;
+}
+
+static void hash_insert(tcb *toAdd) {
+	int hashKey = hash(toAdd->id);
+	QueueNode *toInsert = (QueueNode *) malloc(sizeof(QueueNode));
+	toInsert->node = toAdd;
+	toInsert->next = NULL;
+	linkedList *hashList = hashTable[hashKey];
+	// Critical section (Add node to hashtable)
+	while (__sync_lock_test_and_set(&(hashList->mutex), 1)) rpthread_yield();
+	toInsert->next = hashList->head;
+	hashList->head = toInsert;
+	__sync_lock_release(&(hashList->mutex));
+}

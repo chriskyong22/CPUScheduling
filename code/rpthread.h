@@ -21,6 +21,8 @@
 #define SCHEDULED 1
 #define BLOCKED 2
 #define WAITING 3
+#define EXITED 4
+#define KILLED 5
 
 /* include lib header files that you need here: */
 #include <unistd.h>
@@ -46,7 +48,7 @@ typedef struct threadControlBlock {
 
 	// YOUR CODE HERE
 	rpthread_t id;
-	rpthread_t joinTID; //The threadID of which thread THIS thread is waiting on to join with
+	rpthread_t joinTID; //The threadID of the thread waiting to join this one
 	int priority;
 	int status;
 	uint desiredMutex; // the Mutex it is waiting on/or have 
@@ -79,7 +81,13 @@ typedef struct Queue {
 	QueueNode* head;
 	QueueNode* tail;
 	int size;
+	volatile int mutex;
 } Queue;
+
+typedef struct LinkedList {
+	QueueNode *head;
+	volatile int mutex;
+} linkedList;
 
 typedef struct schedulerNode {
 	uint numberOfQueues; 
