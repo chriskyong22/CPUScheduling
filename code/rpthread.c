@@ -23,7 +23,6 @@ Queue* terminatedAndJoinedQueue = NULL;
 schedulerNode* scheduleInfo = NULL; 
 ucontext_t scheduler = {0}; // Scheduler context
 ucontext_t exitContext = {0}; // Exit context
-ucontext_t cleanContext = {0}; // Clean-up context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 
 volatile int blockedQueueMutex = 0;
@@ -78,11 +77,9 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		//printf("[D]: Initial Setup\n");
 		initializeScheduler();
 		initializeScheduleQueues();
+		atexit(clean_up);
 
-		initializeContext(&cleanContext, NULL);
-		makecontext(&cleanContext, (void*) clean_up, 0);
-
-		initializeContext(&scheduler, &cleanContext);
+		initializeContext(&scheduler, NULL);
 		makecontext(&scheduler, (void*) schedule, 0);
 
 		initializeContext(&exitContext, NULL);
@@ -751,14 +748,23 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 };
 
 static void freeQueue(Queue* queue) {
-	QueueNode* current = queue->head;
-	while (current != NULL) {
-		QueueNode* temp = current;
-		free(temp->node);
-		current = current->next;
+	if (queue == NULL) {
+		return;
+	}
+	QueueNode* currentNode = queue->head;
+	while (currentNode != NULL) {
+		QueueNode* temp = currentNode;
+		tcb* currentTCB = temp->node;
+		if (currentTCB->context.uc_stack.ss_sp != NULL) {
+			free(currentTCB->context.uc_stack.ss_sp);
+			currentTCB->context.uc_stack.ss_sp = NULL;
+		}
+		free(currentTCB);
+		currentNode = currentNode->next;
 		free(temp);
 	}
 	free(queue);
+	queue = NULL;
 }
 
 /* scheduler */
@@ -856,7 +862,55 @@ static void sched_mlfq() {
 }
 
 static void clean_up() {
-	printf("In clean-up\n");
+	printf("[D]: Cleaning up all memory\n");
+	disableTimer();
+	freeQueue(exitQueue);
+
+	freeQueue(joinQueue);
+	
+	freeQueue(blockedQueue);
+	
+	freeQueue(terminatedAndJoinedQueue);
+	
+	if(scheduleInfo != NULL) {
+		if (scheduleInfo->priorityQueues != NULL) {
+			for (int priorityQueueLevel = MAX_PRIORITY - 1; priorityQueueLevel >= 0; priorityQueueLevel--) {
+				if (&scheduleInfo->priorityQueues[priorityQueueLevel] != NULL) {
+					QueueNode* currentNode = scheduleInfo->priorityQueues[priorityQueueLevel].head;
+					while(currentNode != NULL) {
+						QueueNode* temp = currentNode;
+						tcb* currentTCB = temp->node;
+						if (currentTCB->context.uc_stack.ss_sp != NULL) {
+							free(currentTCB->context.uc_stack.ss_sp);
+							currentTCB->context.uc_stack.ss_sp = NULL;
+						}
+						free(currentTCB);
+						currentNode = currentNode->next;
+						free(temp);
+					}
+				}
+			}
+			free(scheduleInfo->priorityQueues);
+		}
+		free(scheduleInfo);
+	}
+	if (current != NULL) {
+		if (current->context.uc_stack.ss_sp != NULL) {
+			free(current->context.uc_stack.ss_sp);
+			current->context.uc_stack.ss_sp = NULL;
+		}
+		free(current);
+		current = NULL;
+	}
+	if (scheduler.uc_stack.ss_sp != NULL) {
+		free(scheduler.uc_stack.ss_sp);
+		scheduler.uc_stack.ss_sp = NULL;
+	}
+	if (exitContext.uc_stack.ss_sp != NULL) {
+		free(exitContext.uc_stack.ss_sp);
+		exitContext.uc_stack.ss_sp = NULL;
+	}
+	
 }
 
 // Feel free to add any other functions you need
