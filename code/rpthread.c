@@ -25,7 +25,7 @@ ucontext_t scheduler = {0}; // Scheduler context
 ucontext_t exitContext = {0}; // Exit context
 tcb* current = NULL; // Current non-scheduler tcb (including context)
 
-volatile int blockedQueueMutex = 0;
+volatile int checkLockMutex = 0;
 volatile int threadIDMutex = 0;
 volatile int mutexIDMutex = 0;
 
@@ -47,6 +47,7 @@ static tcb* dequeue(Queue*);
 static void freeQueue(Queue* queue);
 static tcb* findFirstOfJoinQueue(Queue* queue, rpthread_t thread);
 static tcb* findFirstOfQueue(Queue* queue, rpthread_t thread);
+static tcb* findFirstOfBlockedQueue(Queue* queue, int mutexID);
 static int checkExistBlockedQueue(Queue* queue, int mutexID);
 static int checkExistQueue(Queue* queue, int threadId);
 static int checkExistJoinQueue(Queue* queue, int threadId);
@@ -240,11 +241,15 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         // if acquiring mutex fails, push current thread into block list and 
         // context switch to the scheduler thread
 
-		if (mutex == NULL) return -1;
+		if (mutex == NULL || mutex->id == 0) return -1;
 
 		while (__sync_lock_test_and_set(&(mutex->lock), 1)) {
-			disableTimer(); // Need rest of block to execute continuously and we yield anyway
+			pauseTimer(); // Need rest of block to execute continuously and we yield anyway
 			//printf("[D]: Current thread %d wants a mutex %d but it is already locked by thread %d.\n", current->id, mutex->id, mutex->tid);
+			if (mutex->id != 1) {
+				resumeTimer();
+				continue;
+			}
 			current->desiredMutex = mutex->id;
 			//printf("[D]: Adding current thread to the block queue\n");
 			enqueue(blockedQueue, current); 
@@ -265,7 +270,7 @@ int rpthread_mutex_lock(rpthread_mutex_t *mutex) {
         } 
     	//printf("[D]: This thread %d is locking this mutex!\n", current->id);
     	mutex->tid = current->id;
-    	__sync_lock_release(&(blockedQueueMutex)); 
+    	//__sync_lock_release(&(blockedQueueMutex)); 
         
         
         return 0;
@@ -279,7 +284,7 @@ int rpthread_mutex_unlock(rpthread_mutex_t *mutex) {
 
 	// Checking if the thread has the mutex so other threads cannot just unlock 
 	// mutexes they do not have or if the mutex is unlocked already
-	if (mutex == NULL || mutex->tid != current->id || mutex->lock == 0) {
+	if (mutex == NULL || mutex->id == 0 || mutex->tid != current->id || mutex->lock == 0) {
 		// char* debug = "[D]: Entered a bad place\n";
 		// write(1, &debug, sizeof(debug));
 		return -1;
@@ -312,7 +317,7 @@ int rpthread_mutex_destroy(rpthread_mutex_t *mutex) {
 	// Deallocate dynamic memory created in rpthread_mutex_init
 	pauseTimer();
 	//printf("Entered Mutex Destroy\n");
-	if (mutex == NULL) {
+	if (mutex == NULL || mutex->id == 0) {
 		resumeTimer();
 		return -1;
 	}
@@ -648,7 +653,8 @@ static void resumeTimer() {
 	timer.it_value.tv_sec = (((TIMESLICE * 1000) / 1000000) == 0) ? 0 : ((TIMESLICE * 1000) / 1000000) - (timer.it_value.tv_sec % ((TIMESLICE * 1000) / 1000000));
 	timer.it_value.tv_usec = (((TIMESLICE * 1000) % 1000000) == 0) ? 0 : ((TIMESLICE * 1000) % 1000000) - (timer.it_value.tv_usec % ((TIMESLICE * 1000) % 1000000));
 
-	setitimer(ITIMER_PROF, &timer, NULL);
+	if (timer.it_value.tv_usec == 0 && timer.it_value.tv_usec == 0) startTimer();
+	else setitimer(ITIMER_PROF, &timer, NULL);
 	//printf("[D]: The timer is resuming!\n");
 }
 
