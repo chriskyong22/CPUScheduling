@@ -86,7 +86,7 @@ int rpthread_create(rpthread_t * thread, pthread_attr_t * attr,
 		makecontext(&exitContext, (void*) rpthread_exit, 1, NULL);
 
 		tcb* mainTCB = initializeTCB();
-		printf("Main thread %d\n", mainTCB->id);
+		//printf("Main thread %d\n", mainTCB->id);
 		current = mainTCB;
 
 		/**
@@ -234,7 +234,7 @@ static void initializeTimer() {
 	timer.it_value.tv_sec = (TIMESLICE * 1000) / 1000000;
 	timer.it_value.tv_usec = (TIMESLICE * 1000) % 1000000;
 
-	printf("[D]: The timer has been initialized.\n Time interval is %ld seconds, %ld microseconds.\n The Time remaining is %ld seconds, %ld microseconds.\n", timer.it_interval.tv_sec, timer.it_interval.tv_usec, 		timer.it_value.tv_sec, timer.it_value.tv_usec);
+	//printf("[D]: The timer has been initialized.\n Time interval is %ld seconds, %ld microseconds.\n The Time remaining is %ld seconds, %ld microseconds.\n", timer.it_interval.tv_sec, timer.it_interval.tv_usec, 		timer.it_value.tv_sec, timer.it_value.tv_usec);
 	
 	setitimer(ITIMER_PROF, &timer, NULL);
 }
@@ -862,7 +862,7 @@ static void sched_mlfq() {
 }
 
 static void clean_up() {
-	printf("[D]: Cleaning up all memory\n");
+	//printf("[D]: Cleaning up all memory\n");
 	disableTimer();
 	freeQueue(exitQueue);
 
