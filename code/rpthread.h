@@ -51,6 +51,7 @@ typedef struct threadControlBlock {
 	rpthread_t joinTID; //The threadID of the thread waiting to join this one
 	int priority;
 	int status;
+	volatile int joinMutex;
 	uint desiredMutex; // the Mutex it is waiting on/or have 
 	ucontext_t context;
 	void* exitValue;
